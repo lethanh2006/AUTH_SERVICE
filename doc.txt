@@ -1,0 +1,1 @@
+npm install -D @types/express @types/node @types/passport-jwt @types/passport-local @types/bcrypt @types/amqplib
