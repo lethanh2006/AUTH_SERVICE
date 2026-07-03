@@ -1,0 +1,39 @@
+import { Controller, Post, Body, Headers, UnauthorizedException, HttpCode, HttpStatus } from '@nestjs/common';
+import { AuthService } from './auth.service';
+import { RegisterDto } from './dto/register.dto';
+import { LoginDto } from './dto/login.dto';
+import { VerifyOtpDto } from './dto/verify-otp.dto';
+@Controller('api/auth') // Tất cả các API trong Controller này bắt đầu bằng /api/auth
+export class AuthController {
+    constructor(private readonly authService: AuthService) { }
+    @Post('register')
+    async register(@Body() registerDto: RegisterDto) {
+        return this.authService.register(registerDto);
+    }
+    @Post('login')
+    @HttpCode(HttpStatus.OK)
+    async login(@Body() loginDto: LoginDto) {
+        return this.authService.login(loginDto);
+    }
+    @Post('verify')
+    @HttpCode(HttpStatus.OK)
+    async verifyOtp(@Body() verifyOtpDto: VerifyOtpDto) {
+        return this.authService.verifyOtp(verifyOtpDto);
+    }
+    // API dành riêng cho API Gateway gọi vào để xác thực JWT token của Client
+    @Post('introspect')
+    @HttpCode(HttpStatus.OK)
+    async introspect(@Headers('authorization') authHeader: string) {
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            throw new UnauthorizedException('Không có Token hoặc định dạng Authorization sai');
+        }
+        const token = authHeader.split(' ')[1];
+        const result = await this.authService.validateToken(token);
+
+        if (!result.valid) {
+            throw new UnauthorizedException(result.message || 'Token không hợp lệ hoặc đã hết hạn');
+        }
+
+        return result;
+    }
+}
