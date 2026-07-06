@@ -10,6 +10,7 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import axios from 'axios';
+import { RolePermissions } from '../../config/roles-permissions';
 @Injectable()
 export class AuthService {
     private readonly logger = new Logger(AuthService.name);
@@ -109,11 +110,13 @@ export class AuthService {
         } catch (err) {
             this.logger.warn(`Không lấy được thông tin username từ User Service: ${err.message}`);
         }
+        const permissions = RolePermissions[cred.role] || [];
         const payload = {
             user: {
                 _id: cred._id,
                 email: cred.email,
                 role: cred.role,
+                permissions: permissions,
                 username: username,
             },
         };
