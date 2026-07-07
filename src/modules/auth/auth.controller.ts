@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Headers, UnauthorizedException, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Patch, Param, Body, Headers, UnauthorizedException, HttpCode, HttpStatus } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -35,5 +35,12 @@ export class AuthController {
         }
 
         return result;
+    }
+
+    // API Cập nhật vai trò người dùng (chỉ gọi nội bộ hoặc từ trang Admin quản trị)
+    @Patch('users/:id/role')
+    @HttpCode(HttpStatus.OK)
+    async updateUserRole(@Param('id') id: string, @Body() body: { role: string }) {
+        return this.authService.updateUserRole(id, body.role);
     }
 }
