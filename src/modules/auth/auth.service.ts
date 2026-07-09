@@ -26,7 +26,6 @@ export class AuthService {
     private get userServiceUrl(): string {
         return this.configService.get<string>('USER_SERVICE') || 'http://localhost:5000';
     }
-    // 1. Đăng ký tài khoản
     async register(registerDto: RegisterDto) {
         const { email, password, username } = registerDto;
         const existingCred = await this.credentialModel.findOne({ email });
@@ -39,7 +38,6 @@ export class AuthService {
             passwordHash,
             role: 'user',
         });
-        // Đồng bộ thông tin profile sang User Service qua REST API nội bộ
         try {
             await axios.post(`${this.userServiceUrl}/api/user/internal/create-profile`, {
                 userId: newCred._id,

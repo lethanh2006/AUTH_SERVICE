@@ -3,7 +3,7 @@ import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
-@Controller('api/auth') // Tất cả các API trong Controller này bắt đầu bằng /api/auth
+@Controller('api/auth')
 export class AuthController {
     constructor(private readonly authService: AuthService) { }
     @Post('register')
