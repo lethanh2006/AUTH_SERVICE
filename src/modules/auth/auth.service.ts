@@ -1,4 +1,5 @@
 import { Injectable, BadRequestException, HttpException, HttpStatus, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { JwtService } from '@nestjs/jwt';
@@ -19,7 +20,12 @@ export class AuthService {
         private jwtService: JwtService,
         private redisService: RedisService,
         private rabbitMQService: RabbitMQService,
+        private configService: ConfigService,
     ) { }
+
+    private get userServiceUrl(): string {
+        return this.configService.get<string>('USER_SERVICE') || 'http://localhost:5000';
+    }
     // 1. Đăng ký tài khoản
     async register(registerDto: RegisterDto) {
         const { email, password, username } = registerDto;
@@ -35,15 +41,13 @@ export class AuthService {
         });
         // Đồng bộ thông tin profile sang User Service qua REST API nội bộ
         try {
-            await axios.post('http://localhost:5000/api/user/internal/create-profile', {
+            await axios.post(`${this.userServiceUrl}/api/user/internal/create-profile`, {
                 userId: newCred._id,
                 username,
                 email,
             });
         } catch (err) {
             this.logger.error(`Đồng bộ sang User Service thất bại: ${err.message}`);
-            // LƯU Ý: Với kiến trúc senior, ta thường dùng RabbitMQ để gửi event và xử lý không đồng bộ (Eventual Consistency). 
-            // Ở đây tạm dùng REST HTTP để đơn giản hóa quá trình đồng bộ đồng thời cho bạn dễ làm quen.
         }
         return {
             message: 'Đăng ký tài khoản thành công. Hãy đăng nhập để nhận mã OTP.',
@@ -105,7 +109,7 @@ export class AuthService {
         // Lấy thông tin username từ User Service thông qua API internal
         let username = '';
         try {
-            const response = await axios.get(`http://localhost:5000/api/user/internal/${cred._id}`);
+            const response = await axios.get(`${this.userServiceUrl}/api/user/internal/${cred._id}`);
             username = response.data.user?.username || '';
         } catch (err) {
             this.logger.warn(`Không lấy được thông tin username từ User Service: ${err.message}`);
@@ -194,7 +198,7 @@ export class AuthService {
 
         // Gọi đồng bộ vai trò sang User Service bằng REST API nội bộ
         try {
-            await axios.patch(`http://localhost:5000/api/user/internal/${userId}/role`, {
+            await axios.patch(`${this.userServiceUrl}/api/user/internal/${userId}/role`, {
                 role: newRole,
             });
         } catch (err) {
