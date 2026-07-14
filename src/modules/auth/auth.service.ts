@@ -11,7 +11,6 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import axios from 'axios';
-import { RolePermissions } from '../../config/roles-permissions';
 @Injectable()
 export class AuthService {
     private readonly logger = new Logger(AuthService.name);
@@ -112,14 +111,12 @@ export class AuthService {
         } catch (err) {
             this.logger.warn(`Không lấy được thông tin username từ User Service: ${err.message}`);
         }
-        const permissions = RolePermissions[cred.role] || [];
         const payload = {
             user: {
                 _id: cred._id,
                 email: cred.email,
                 username: username,
                 role: cred.role,
-                permissions: permissions,
             },
         };
         // Tạo JWT Token có thời hạn sử dụng 7 ngày
@@ -132,10 +129,10 @@ export class AuthService {
                 email: cred.email,
                 username: username,
                 role: cred.role,
-                permissions: permissions,
             },
         };
     }
+
     // 4. Introspect Endpoint để Gateway kiểm tra JWT
     async validateToken(token: string) {
         try {
@@ -144,34 +141,9 @@ export class AuthService {
             if (!userPayload || !userPayload._id) {
                 return { valid: false, message: 'Token payload không hợp lệ' };
             }
-            const userId = userPayload._id;
-            const cacheKey = `user:roles-permissions:${userId}`;
-            let role: string;
-            let permissions: string[];
-
-            const cachedDataStr = await this.redisService.get(cacheKey);
-            if (cachedDataStr) {
-                const cachedData = JSON.parse(cachedDataStr);
-                role = cachedData.role;
-                permissions = cachedData.permissions;
-            } else {
-                const cred = await this.credentialModel.findById(userId);
-                if (!cred) {
-                    return { valid: false, message: 'Tài khoản người dùng không tồn tại' };
-                }
-                role = cred.role || 'user';
-                permissions = RolePermissions[role] || [];
-                // Lưu vào Redis cache trong 1 giờ (3600 giây)
-                await this.redisService.set(cacheKey, JSON.stringify({ role, permissions }), 3600);
-            }
-
             return {
                 valid: true,
-                user: {
-                    ...userPayload,
-                    role,
-                    permissions,
-                },
+                user: userPayload,
             };
         } catch (err) {
             return {
@@ -181,9 +153,10 @@ export class AuthService {
         }
     }
 
-    // 5. Cập nhật role của user & Invalidate cache permissions trên Redis
+    // 5. Cập nhật role của user
     async updateUserRole(userId: string, newRole: string) {
-        if (!RolePermissions[newRole]) {
+        const allowedRoles = ['admin', 'user', 'manager'];
+        if (!allowedRoles.includes(newRole)) {
             throw new BadRequestException(`Vai trò ${newRole} không hợp lệ!`);
         }
 
@@ -191,10 +164,6 @@ export class AuthService {
         if (!cred) {
             throw new BadRequestException('Không tìm thấy tài khoản người dùng!');
         }
-
-        // Xóa cache permissions trên Redis của user đó ngay lập tức
-        const cacheKey = `user:roles-permissions:${userId}`;
-        await this.redisService.del(cacheKey);
 
         // Gọi đồng bộ vai trò sang User Service bằng REST API nội bộ
         try {
@@ -206,7 +175,7 @@ export class AuthService {
         }
 
         return {
-            message: 'Cập nhật vai trò người dùng thành công và xóa cache thành công!',
+            message: 'Cập nhật vai trò người dùng thành công!',
             userId,
             role: newRole,
         };
