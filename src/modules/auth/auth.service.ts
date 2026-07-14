@@ -118,6 +118,8 @@ export class AuthService {
                 _id: cred._id,
                 email: cred.email,
                 username: username,
+                role: cred.role,
+                permissions: permissions,
             },
         };
         // Tạo JWT Token có thời hạn sử dụng 7 ngày
