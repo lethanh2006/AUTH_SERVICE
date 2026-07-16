@@ -1,8 +1,9 @@
-import { Controller, Post, Patch, Param, Body, Headers, UnauthorizedException, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Get, Patch, Delete, Param, Body, Headers, UnauthorizedException, HttpCode, HttpStatus } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
+
 @Controller('api/auth')
 export class AuthController {
     constructor(private readonly authService: AuthService) { }
@@ -42,5 +43,49 @@ export class AuthController {
     @HttpCode(HttpStatus.OK)
     async updateUserRole(@Param('id') id: string, @Body() body: { role: string }) {
         return this.authService.updateUserRole(id, body.role);
+    }
+
+    // API Làm mới Access Token
+    @Post('refresh')
+    @HttpCode(HttpStatus.OK)
+    async refresh(@Body() body: { token: string }) {
+        return this.authService.refreshToken(body.token);
+    }
+
+    // API Đăng nhập bằng Google
+    @Post('login-google')
+    @HttpCode(HttpStatus.OK)
+    async loginGoogle(@Body() body: { token: string }) {
+        return this.authService.loginWithGoogle(body.token);
+    }
+
+    // API Lấy thông tin credential của bản thân
+    @Get('me')
+    async getMyProfile(@Headers('x-user-payload') userPayload: string) {
+        return this.authService.getMyProfile(userPayload);
+    }
+
+    // API Cập nhật email của bản thân
+    @Patch('me/email')
+    async updateMyEmail(@Headers('x-user-payload') userPayload: string, @Body() body: { email: string }) {
+        return this.authService.updateMyEmail(userPayload, body.email);
+    }
+
+    // API Xóa tài khoản của bản thân
+    @Delete('me')
+    async deleteMyAccount(@Headers('x-user-payload') userPayload: string) {
+        return this.authService.deleteMyAccount(userPayload);
+    }
+
+    // API Admin lấy credential của user bất kỳ
+    @Get('users/:userId')
+    async getUserProfileByAdmin(@Param('userId') userId: string) {
+        return this.authService.getUserProfileByAdmin(userId);
+    }
+
+    // API Admin xóa tài khoản của user bất kỳ
+    @Delete('users/:userId')
+    async deleteUserByAdmin(@Param('userId') userId: string) {
+        return this.authService.deleteUserByAdmin(userId);
     }
 }

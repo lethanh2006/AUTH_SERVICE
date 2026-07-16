@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, HttpException, HttpStatus, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, HttpException, HttpStatus, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -38,13 +38,15 @@ export class AuthService {
             role: 'user',
         });
         try {
-            await axios.post(`${this.userServiceUrl}/api/user/internal/create-profile`, {
+            await this.rabbitMQService.publish('user-profile-sync', {
+                action: 'CREATE',
                 userId: newCred._id,
                 username,
                 email,
+                role: newCred.role,
             });
-        } catch (err) {
-            this.logger.error(`Đồng bộ sang User Service thất bại: ${err.message}`);
+        } catch (err: any) {
+            this.logger.error(`Đồng bộ sang User Service qua RabbitMQ thất bại: ${err.message}`);
         }
         return {
             message: 'Đăng ký tài khoản thành công. Hãy đăng nhập để nhận mã OTP.',
@@ -165,19 +167,248 @@ export class AuthService {
             throw new BadRequestException('Không tìm thấy tài khoản người dùng!');
         }
 
-        // Gọi đồng bộ vai trò sang User Service bằng REST API nội bộ
         try {
-            await axios.patch(`${this.userServiceUrl}/api/user/internal/${userId}/role`, {
+            await this.rabbitMQService.publish('user-profile-sync', {
+                action: 'UPDATE_ROLE',
+                userId,
                 role: newRole,
             });
-        } catch (err) {
-            this.logger.warn(`Đồng bộ cập nhật role sang User Service thất bại: ${err.message}`);
+        } catch (err: any) {
+            this.logger.warn(`Đồng bộ cập nhật role sang User Service qua RabbitMQ thất bại: ${err.message}`);
         }
 
         return {
             message: 'Cập nhật vai trò người dùng thành công!',
             userId,
             role: newRole,
+        };
+    }
+
+    // 6. Làm mới Access Token
+    async refreshToken(token: string) {
+        try {
+            const decoded = this.jwtService.verify(token, { ignoreExpiration: true });
+            const userPayload = decoded.user;
+            if (!userPayload || !userPayload._id) {
+                throw new BadRequestException('Token payload không hợp lệ');
+            }
+            const cred = await this.credentialModel.findById(userPayload._id);
+            if (!cred) {
+                throw new BadRequestException('Không tìm thấy tài khoản người dùng!');
+            }
+            
+            let username = userPayload.username;
+            try {
+                const response = await axios.get(`${this.userServiceUrl}/api/user/internal/${cred._id}`);
+                username = response.data.user?.username || userPayload.username;
+            } catch (err) {
+                // fallback
+            }
+
+            const payload = {
+                user: {
+                    _id: cred._id,
+                    email: cred.email,
+                    role: cred.role,
+                    username,
+                },
+            };
+            const newToken = this.jwtService.sign(payload);
+            return {
+                message: 'Làm mới token thành công!',
+                token: newToken,
+                user: payload.user,
+            };
+        } catch (err: any) {
+            throw new BadRequestException('Token không hợp lệ hoặc không thể refresh: ' + err.message);
+        }
+    }
+
+    // 7. Đăng nhập bằng Google
+    async loginWithGoogle(token: string) {
+        try {
+            let email: string = '';
+            let name: string = '';
+            try {
+                const res = await axios.get(`https://oauth2.googleapis.com/tokeninfo?id_token=${token}`);
+                email = res.data.email;
+                name = res.data.name || res.data.given_name || email.split('@')[0];
+            } catch (err) {
+                const res = await axios.get('https://www.googleapis.com/oauth2/v3/userinfo', {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+                email = res.data.email;
+                name = res.data.name || res.data.given_name || email.split('@')[0];
+            }
+
+            if (!email) {
+                throw new BadRequestException('Không thể lấy thông tin email từ Google Token');
+            }
+
+            let cred = await this.credentialModel.findOne({ email });
+            let isNew = false;
+            if (!cred) {
+                const passwordHash = await bcrypt.hash(Math.random().toString(36), 10);
+                cred = await this.credentialModel.create({
+                    email,
+                    passwordHash,
+                    role: 'user',
+                });
+                isNew = true;
+            }
+
+            if (isNew) {
+                try {
+                    await this.rabbitMQService.publish('user-profile-sync', {
+                        action: 'CREATE',
+                        userId: cred._id,
+                        username: name,
+                        email,
+                        role: cred.role,
+                    });
+                } catch (err: any) {
+                    this.logger.error(`Đăng ký sự kiện tạo profile Google thất bại: ${err.message}`);
+                }
+            }
+
+            let username = name;
+            try {
+                const response = await axios.get(`${this.userServiceUrl}/api/user/internal/${cred._id}`);
+                username = response.data.user?.username || name;
+            } catch (err) {
+                // fallback
+            }
+
+            const payload = {
+                user: {
+                    _id: cred._id,
+                    email: cred.email,
+                    role: cred.role,
+                    username,
+                },
+            };
+            const accessToken = this.jwtService.sign(payload);
+            return {
+                message: 'Đăng nhập bằng Google thành công!',
+                token: accessToken,
+                user: payload.user,
+            };
+        } catch (error: any) {
+            throw new BadRequestException('Đăng nhập Google thất bại: ' + (error.response?.data?.error_description || error.message));
+        }
+    }
+
+    // 8. Lấy thông tin credential của bản thân
+    async getMyProfile(userPayloadBase64: string) {
+        if (!userPayloadBase64) {
+            throw new UnauthorizedException('Thiếu payload thông tin người dùng');
+        }
+        const userStr = Buffer.from(userPayloadBase64, 'base64').toString('utf8');
+        const user = JSON.parse(userStr);
+
+        const cred = await this.credentialModel.findById(user._id);
+        if (!cred) {
+            throw new BadRequestException('Không tìm thấy tài khoản người dùng!');
+        }
+        return {
+            _id: cred._id,
+            email: cred.email,
+            role: cred.role,
+        };
+    }
+
+    // 9. Cập nhật email của bản thân
+    async updateMyEmail(userPayloadBase64: string, email: string) {
+        if (!userPayloadBase64) {
+            throw new UnauthorizedException('Thiếu payload thông tin người dùng');
+        }
+        const userStr = Buffer.from(userPayloadBase64, 'base64').toString('utf8');
+        const user = JSON.parse(userStr);
+
+        const existing = await this.credentialModel.findOne({ email, _id: { $ne: user._id } });
+        if (existing) {
+            throw new BadRequestException('Email này đã được đăng ký bởi người dùng khác!');
+        }
+
+        const cred = await this.credentialModel.findByIdAndUpdate(user._id, { email }, { new: true });
+        if (!cred) {
+            throw new BadRequestException('Không tìm thấy tài khoản người dùng!');
+        }
+
+        try {
+            await this.rabbitMQService.publish('user-profile-sync', {
+                action: 'UPDATE_EMAIL',
+                userId: cred._id,
+                email: cred.email,
+            });
+        } catch (err: any) {
+            this.logger.error(`Đăng ký sự kiện cập nhật email thất bại: ${err.message}`);
+        }
+
+        return {
+            message: 'Cập nhật email thành công!',
+            email: cred.email,
+        };
+    }
+
+    // 10. Xóa tài khoản của bản thân
+    async deleteMyAccount(userPayloadBase64: string) {
+        if (!userPayloadBase64) {
+            throw new UnauthorizedException('Thiếu payload thông tin người dùng');
+        }
+        const userStr = Buffer.from(userPayloadBase64, 'base64').toString('utf8');
+        const user = JSON.parse(userStr);
+
+        const cred = await this.credentialModel.findByIdAndDelete(user._id);
+        if (!cred) {
+            throw new BadRequestException('Không tìm thấy tài khoản người dùng!');
+        }
+
+        try {
+            await this.rabbitMQService.publish('user-profile-sync', {
+                action: 'DELETE',
+                userId: user._id,
+            });
+        } catch (err: any) {
+            this.logger.error(`Đăng ký sự kiện xóa tài khoản thất bại: ${err.message}`);
+        }
+
+        return {
+            message: 'Xóa tài khoản thành công!',
+        };
+    }
+
+    // 11. Admin lấy credential của user bất kỳ
+    async getUserProfileByAdmin(userId: string) {
+        const cred = await this.credentialModel.findById(userId);
+        if (!cred) {
+            throw new BadRequestException('Không tìm thấy tài khoản người dùng!');
+        }
+        return {
+            _id: cred._id,
+            email: cred.email,
+            role: cred.role,
+        };
+    }
+
+    // 12. Admin xóa tài khoản của user bất kỳ
+    async deleteUserByAdmin(userId: string) {
+        const cred = await this.credentialModel.findByIdAndDelete(userId);
+        if (!cred) {
+            throw new BadRequestException('Không tìm thấy tài khoản người dùng!');
+        }
+
+        try {
+            await this.rabbitMQService.publish('user-profile-sync', {
+                action: 'DELETE',
+                userId,
+            });
+        } catch (err: any) {
+            this.logger.error(`Đăng ký sự kiện admin xóa tài khoản thất bại: ${err.message}`);
+        }
+
+        return {
+            message: 'Admin xóa tài khoản người dùng thành công!',
         };
     }
 }
