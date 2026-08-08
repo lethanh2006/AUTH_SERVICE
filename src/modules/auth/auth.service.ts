@@ -143,9 +143,20 @@ export class AuthService {
             if (!userPayload || !userPayload._id) {
                 return { valid: false, message: 'Token payload không hợp lệ' };
             }
+
+            const credential = await this.credentialModel.findById(userPayload._id).lean();
+            if (!credential) {
+                return { valid: false, message: 'Tài khoản không còn tồn tại' };
+            }
+
             return {
                 valid: true,
-                user: userPayload,
+                user: {
+                    _id: String(credential._id),
+                    email: credential.email,
+                    username: userPayload.username || '',
+                    role: credential.role,
+                },
             };
         } catch (err) {
             return {

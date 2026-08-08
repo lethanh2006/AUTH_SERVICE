@@ -8,6 +8,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
             imports: [ConfigModule],
             useFactory: async (configService: ConfigService) => ({
                 uri: configService.get<string>('MONGO_URL') || 'mongodb://localhost:27017/chatapp',
+                dbName: configService.get<string>('MONGO_DB_NAME') || 'nrapp',
             }),
             inject: [ConfigService],
         }),
