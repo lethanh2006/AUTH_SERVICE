@@ -4,6 +4,8 @@ import { DatabaseModule } from './modules/database/database.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { RedisModule } from './modules/redis/redis.module';
 import { RabbitMQModule } from './modules/rabbitmq/rabbitmq.module';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
 
 @Module({
   imports: [
@@ -17,5 +19,7 @@ import { RabbitMQModule } from './modules/rabbitmq/rabbitmq.module';
     RedisModule,
     RabbitMQModule,
   ],
+  controllers: [AppController],
+  providers: [AppService],
 })
 export class AppModule { }
