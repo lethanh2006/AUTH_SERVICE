@@ -6,13 +6,13 @@ export type CredentialDocument = Credential & Document;
 @Schema({ timestamps: true })
 export class Credential {
     @Prop({ required: true, unique: true, trim: true })
-    email: string;
+    email!: string;
 
     @Prop({ required: true })
-    passwordHash: string;
+    passwordHash!: string;
 
     @Prop({ required: true, default: 'user' })
-    role: string;
+    role!: string;
 }
 
 export const CredentialSchema = SchemaFactory.createForClass(Credential);

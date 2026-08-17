@@ -9,10 +9,10 @@ import * as amqp from 'amqplib';
 
 @Injectable()
 export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
-  private connection?: amqp.ChannelModel;
-  private channel?: amqp.Channel;
-  private connectionPromise?: Promise<void>;
-  private shuttingDown = false;
+  private connection?: amqp.ChannelModel;  // kết nối tới RabbitMQ server
+  private channel?: amqp.Channel;  // "kênh" để gửi/nhận tin, làm việc thật sự qua đây
+  private connectionPromise?: Promise<void>;   // tránh việc connect nhiều lần cùng lúc
+  private shuttingDown = false;  // cờ đánh dấu app đang tắt
   private readonly logger = new Logger(RabbitMQService.name);
 
   constructor(private configService: ConfigService) {}

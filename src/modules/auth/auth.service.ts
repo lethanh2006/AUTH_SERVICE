@@ -110,7 +110,7 @@ export class AuthService {
         try {
             const response = await axios.get(`${this.userServiceUrl}/api/user/internal/${cred._id}`);
             username = response.data.user?.username || '';
-        } catch (err) {
+        } catch (err: any) {
             this.logger.warn(`Không lấy được thông tin username từ User Service: ${err.message}`);
         }
         const payload = {
@@ -158,10 +158,10 @@ export class AuthService {
                     role: credential.role,
                 },
             };
-        } catch (err) {
+        } catch (err: any) {
             return {
                 valid: false,
-                message: err.message,
+                message: err?.message || String(err),
             };
         }
     }
