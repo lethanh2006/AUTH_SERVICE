@@ -6,9 +6,11 @@ import { RedisModule } from './modules/redis/redis.module';
 import { RabbitMQModule } from './modules/rabbitmq/rabbitmq.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { CoreModule } from './core/core.module';
 
 @Module({
   imports: [
+    CoreModule,
     // Load file môi trường .env (cần cấu hình toàn cục isGlobal: true)
     ConfigModule.forRoot({
       isGlobal: true,
