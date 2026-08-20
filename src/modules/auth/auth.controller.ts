@@ -8,18 +8,18 @@ import { VerifyOtpDto } from './dto/verify-otp.dto';
 export class AuthController {
     constructor(private readonly authService: AuthService) { }
     @Post('register')
-    async register(@Body() registerDto: RegisterDto) {
-        return this.authService.register(registerDto);
+    async register(@Body() registerDto: RegisterDto, @Headers('x-request-id') requestId: string) {
+        return this.authService.register(registerDto, requestId);
     }
     @Post('login')
     @HttpCode(HttpStatus.OK)
-    async login(@Body() loginDto: LoginDto) {
-        return this.authService.login(loginDto);
+    async login(@Body() loginDto: LoginDto, @Headers('x-request-id') requestId: string) {
+        return this.authService.login(loginDto, requestId);
     }
     @Post('verify')
     @HttpCode(HttpStatus.OK)
-    async verifyOtp(@Body() verifyOtpDto: VerifyOtpDto) {
-        return this.authService.verifyOtp(verifyOtpDto);
+    async verifyOtp(@Body() verifyOtpDto: VerifyOtpDto, @Headers('x-request-id') requestId: string) {
+        return this.authService.verifyOtp(verifyOtpDto, requestId);
     }
     // API dành riêng cho API Gateway gọi vào để xác thực JWT token của Client
     @Post('introspect')
@@ -41,22 +41,22 @@ export class AuthController {
     // API Cập nhật vai trò người dùng (chỉ gọi nội bộ hoặc từ trang Admin quản trị)
     @Patch('users/:id/role')
     @HttpCode(HttpStatus.OK)
-    async updateUserRole(@Param('id') id: string, @Body() body: { role: string }) {
-        return this.authService.updateUserRole(id, body.role);
+    async updateUserRole(@Param('id') id: string, @Body() body: { role: string }, @Headers('x-request-id') requestId: string) {
+        return this.authService.updateUserRole(id, body.role, requestId);
     }
 
     // API Làm mới Access Token
     @Post('refresh')
     @HttpCode(HttpStatus.OK)
-    async refresh(@Body() body: { token: string }) {
-        return this.authService.refreshToken(body.token);
+    async refresh(@Body() body: { token: string }, @Headers('x-request-id') requestId: string) {
+        return this.authService.refreshToken(body.token, requestId);
     }
 
     // API Đăng nhập bằng Google
     @Post('login-google')
     @HttpCode(HttpStatus.OK)
-    async loginGoogle(@Body() body: { token: string }) {
-        return this.authService.loginWithGoogle(body.token);
+    async loginGoogle(@Body() body: { token: string }, @Headers('x-request-id') requestId: string) {
+        return this.authService.loginWithGoogle(body.token, requestId);
     }
 
     // API Lấy thông tin credential của bản thân
@@ -67,14 +67,14 @@ export class AuthController {
 
     // API Cập nhật email của bản thân
     @Patch('me/email')
-    async updateMyEmail(@Headers('x-user-payload') userPayload: string, @Body() body: { email: string }) {
-        return this.authService.updateMyEmail(userPayload, body.email);
+    async updateMyEmail(@Headers('x-user-payload') userPayload: string, @Body() body: { email: string }, @Headers('x-request-id') requestId: string) {
+        return this.authService.updateMyEmail(userPayload, body.email, requestId);
     }
 
     // API Xóa tài khoản của bản thân
     @Delete('me')
-    async deleteMyAccount(@Headers('x-user-payload') userPayload: string) {
-        return this.authService.deleteMyAccount(userPayload);
+    async deleteMyAccount(@Headers('x-user-payload') userPayload: string, @Headers('x-request-id') requestId: string) {
+        return this.authService.deleteMyAccount(userPayload, requestId);
     }
 
     // API Admin lấy credential của user bất kỳ
@@ -85,7 +85,7 @@ export class AuthController {
 
     // API Admin xóa tài khoản của user bất kỳ
     @Delete('users/:userId')
-    async deleteUserByAdmin(@Param('userId') userId: string) {
-        return this.authService.deleteUserByAdmin(userId);
+    async deleteUserByAdmin(@Param('userId') userId: string, @Headers('x-request-id') requestId: string) {
+        return this.authService.deleteUserByAdmin(userId, requestId);
     }
 }

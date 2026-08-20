@@ -25,7 +25,7 @@ export class AuthService {
     private get userServiceUrl(): string {
         return this.configService.get<string>('USER_SERVICE') || 'http://localhost:5000';
     }
-    async register(registerDto: RegisterDto) {
+    async register(registerDto: RegisterDto, requestId: string) {
         const { email, password, username } = registerDto;
         const existingCred = await this.credentialModel.findOne({ email });
         if (existingCred) {
@@ -44,7 +44,7 @@ export class AuthService {
                 username,
                 email,
                 role: newCred.role,
-            });
+            }, requestId);
         } catch (err: any) {
             this.logger.error(`Đồng bộ sang User Service qua RabbitMQ thất bại: ${err.message}`);
         }
@@ -54,7 +54,7 @@ export class AuthService {
         };
     }
     // 2. Đăng nhập - Tạo OTP và đẩy vào RabbitMQ
-    async login(loginDto: LoginDto) {
+    async login(loginDto: LoginDto, requestId: string) {
         const { email, password } = loginDto;
         const cred = await this.credentialModel.findOne({ email });
         if (!cred) {
@@ -85,14 +85,14 @@ export class AuthService {
             subject: 'Mã xác thực đăng nhập CHATAPP (OTP)',
             body: `Mã OTP xác thực đăng nhập của bạn là: ${otp}. Mã này có giá trị trong 5 phút.`,
         };
-        await this.rabbitMQService.publish('send-otp', mailMessage);
+        await this.rabbitMQService.publish('send-otp', mailMessage, requestId);
         return {
             message: 'Mã OTP đã được gửi về email của bạn. Vui lòng kiểm tra và xác nhận.',
             email,
         };
     }
     // 3. Xác thực OTP & cấp JWT
-    async verifyOtp(verifyOtpDto: VerifyOtpDto) {
+    async verifyOtp(verifyOtpDto: VerifyOtpDto, requestId: string) {
         const { email, otp: enteredOtp } = verifyOtpDto;
         const otpKey = `login_otp:${email}`;
         const storedOtp = await this.redisService.get(otpKey);
@@ -108,7 +108,9 @@ export class AuthService {
         // Lấy thông tin username từ User Service thông qua API internal
         let username = '';
         try {
-            const response = await axios.get(`${this.userServiceUrl}/api/user/internal/${cred._id}`);
+            const response = await axios.get(`${this.userServiceUrl}/api/user/internal/${cred._id}`, {
+                headers: { 'x-request-id': requestId },
+            });
             username = response.data.user?.username || '';
         } catch (err: any) {
             this.logger.warn(`Không lấy được thông tin username từ User Service: ${err.message}`);
@@ -167,7 +169,7 @@ export class AuthService {
     }
 
     // 5. Cập nhật role của user
-    async updateUserRole(userId: string, newRole: string) {
+    async updateUserRole(userId: string, newRole: string, requestId: string) {
         const allowedRoles = ['admin', 'user', 'manager'];
         if (!allowedRoles.includes(newRole)) {
             throw new BadRequestException(`Vai trò ${newRole} không hợp lệ!`);
@@ -183,7 +185,7 @@ export class AuthService {
                 action: 'UPDATE_ROLE',
                 userId,
                 role: newRole,
-            });
+            }, requestId);
         } catch (err: any) {
             this.logger.warn(`Đồng bộ cập nhật role sang User Service qua RabbitMQ thất bại: ${err.message}`);
         }
@@ -196,7 +198,7 @@ export class AuthService {
     }
 
     // 6. Làm mới Access Token
-    async refreshToken(token: string) {
+    async refreshToken(token: string, requestId: string) {
         try {
             const decoded = this.jwtService.verify(token, { ignoreExpiration: true });
             const userPayload = decoded.user;
@@ -210,7 +212,9 @@ export class AuthService {
             
             let username = userPayload.username;
             try {
-                const response = await axios.get(`${this.userServiceUrl}/api/user/internal/${cred._id}`);
+                const response = await axios.get(`${this.userServiceUrl}/api/user/internal/${cred._id}`, {
+                    headers: { 'x-request-id': requestId },
+                });
                 username = response.data.user?.username || userPayload.username;
             } catch (err) {
                 // fallback
@@ -236,7 +240,7 @@ export class AuthService {
     }
 
     // 7. Đăng nhập bằng Google
-    async loginWithGoogle(token: string) {
+    async loginWithGoogle(token: string, requestId: string) {
         try {
             let email: string = '';
             let name: string = '';
@@ -276,7 +280,7 @@ export class AuthService {
                         username: name,
                         email,
                         role: cred.role,
-                    });
+                    }, requestId);
                 } catch (err: any) {
                     this.logger.error(`Đăng ký sự kiện tạo profile Google thất bại: ${err.message}`);
                 }
@@ -284,7 +288,9 @@ export class AuthService {
 
             let username = name;
             try {
-                const response = await axios.get(`${this.userServiceUrl}/api/user/internal/${cred._id}`);
+                const response = await axios.get(`${this.userServiceUrl}/api/user/internal/${cred._id}`, {
+                    headers: { 'x-request-id': requestId },
+                });
                 username = response.data.user?.username || name;
             } catch (err) {
                 // fallback
@@ -329,7 +335,7 @@ export class AuthService {
     }
 
     // 9. Cập nhật email của bản thân
-    async updateMyEmail(userPayloadBase64: string, email: string) {
+    async updateMyEmail(userPayloadBase64: string, email: string, requestId: string) {
         if (!userPayloadBase64) {
             throw new UnauthorizedException('Thiếu payload thông tin người dùng');
         }
@@ -351,7 +357,7 @@ export class AuthService {
                 action: 'UPDATE_EMAIL',
                 userId: cred._id,
                 email: cred.email,
-            });
+            }, requestId);
         } catch (err: any) {
             this.logger.error(`Đăng ký sự kiện cập nhật email thất bại: ${err.message}`);
         }
@@ -363,7 +369,7 @@ export class AuthService {
     }
 
     // 10. Xóa tài khoản của bản thân
-    async deleteMyAccount(userPayloadBase64: string) {
+    async deleteMyAccount(userPayloadBase64: string, requestId: string) {
         if (!userPayloadBase64) {
             throw new UnauthorizedException('Thiếu payload thông tin người dùng');
         }
@@ -379,7 +385,7 @@ export class AuthService {
             await this.rabbitMQService.publish('user-profile-sync', {
                 action: 'DELETE',
                 userId: user._id,
-            });
+            }, requestId);
         } catch (err: any) {
             this.logger.error(`Đăng ký sự kiện xóa tài khoản thất bại: ${err.message}`);
         }
@@ -403,7 +409,7 @@ export class AuthService {
     }
 
     // 12. Admin xóa tài khoản của user bất kỳ
-    async deleteUserByAdmin(userId: string) {
+    async deleteUserByAdmin(userId: string, requestId: string) {
         const cred = await this.credentialModel.findByIdAndDelete(userId);
         if (!cred) {
             throw new BadRequestException('Không tìm thấy tài khoản người dùng!');
@@ -413,7 +419,7 @@ export class AuthService {
             await this.rabbitMQService.publish('user-profile-sync', {
                 action: 'DELETE',
                 userId,
-            });
+            }, requestId);
         } catch (err: any) {
             this.logger.error(`Đăng ký sự kiện admin xóa tài khoản thất bại: ${err.message}`);
         }
