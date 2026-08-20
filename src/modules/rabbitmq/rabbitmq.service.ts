@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as amqp from 'amqplib';
+import { SAFE_REQUEST_ID } from '../../common/middleware/request-id.middleware';
 
 @Injectable()
 export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
@@ -89,7 +90,11 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
     void this.ensureConnection();
   }
 
-  async publish(queueName: string, message: any): Promise<void> {
+  async publish(
+    queueName: string,
+    message: unknown,
+    requestId?: string,
+  ): Promise<void> {
     await this.ensureConnection();
     const channel = this.channel;
     if (!channel) throw new Error('RabbitMQ Channel is not initialized');
@@ -97,6 +102,9 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
     await channel.assertQueue(queueName, { durable: true });
     channel.sendToQueue(queueName, Buffer.from(JSON.stringify(message)), {
       persistent: true,
+      ...(requestId && SAFE_REQUEST_ID.test(requestId)
+        ? { headers: { 'x-request-id': requestId } }
+        : {}),
     });
     this.logger.log(`Published message to queue ${queueName}`);
   }
