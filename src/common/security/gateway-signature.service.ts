@@ -2,6 +2,12 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
+const FORBIDDEN_INTERNAL_SECRETS = new Set([
+  'replace_with_at_least_32_random_characters',
+  'your-super-secret-key-chatapp',
+  'your_jwt_secret_here',
+]);
+
 interface SignedGatewayHeaders {
   context: string;
   payload: string;
@@ -21,7 +27,11 @@ export class GatewaySignatureService {
       ?.trim();
     const secret =
       dedicatedSecret || configService.get<string>('JWT_SECRET')?.trim();
-    if (!secret || Buffer.byteLength(secret) < 32) {
+    if (
+      !secret ||
+      Buffer.byteLength(secret) < 32 ||
+      FORBIDDEN_INTERNAL_SECRETS.has(secret.toLowerCase())
+    ) {
       throw new Error(
         'AUTH_INTERNAL_SECRET hoặc JWT_SECRET phải có ít nhất 32 byte',
       );

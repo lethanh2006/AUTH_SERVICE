@@ -39,7 +39,23 @@ describe('GatewaySignatureService', () => {
 
   it('từ chối secret yếu', () => {
     expect(
-      () => new GatewaySignatureService(new ConfigService({ JWT_SECRET: 'short' })),
+      () =>
+        new GatewaySignatureService(
+          new ConfigService({ JWT_SECRET: 'short' }),
+        ),
+    ).toThrow('ít nhất 32 byte');
+  });
+
+  it('từ chối secret mẫu dù đủ độ dài', () => {
+    expect(
+      () =>
+        new GatewaySignatureService(
+          new ConfigService({
+            AUTH_INTERNAL_SECRET:
+              'replace_with_at_least_32_random_characters',
+            JWT_SECRET: secret,
+          }),
+        ),
     ).toThrow('ít nhất 32 byte');
   });
 });
