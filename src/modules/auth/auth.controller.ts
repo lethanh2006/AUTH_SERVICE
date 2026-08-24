@@ -1,8 +1,10 @@
-import { Controller, Post, Get, Patch, Delete, Param, Body, Headers, UnauthorizedException, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Get, Patch, Delete, Param, Body, Headers, UnauthorizedException, HttpCode, HttpStatus, UseGuards } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { GatewayIdentityGuard } from '../../common/guards/gateway-identity.guard';
+import { GatewayRoles } from '../../common/decorators/gateway-roles.decorator';
 
 @Controller('api/auth')
 export class AuthController {
@@ -41,6 +43,8 @@ export class AuthController {
     // API Cập nhật vai trò người dùng (chỉ gọi nội bộ hoặc từ trang Admin quản trị)
     @Patch('users/:id/role')
     @HttpCode(HttpStatus.OK)
+    @UseGuards(GatewayIdentityGuard)
+    @GatewayRoles('admin')
     async updateUserRole(@Param('id') id: string, @Body() body: { role: string }, @Headers('x-request-id') requestId: string) {
         return this.authService.updateUserRole(id, body.role, requestId);
     }
@@ -61,30 +65,37 @@ export class AuthController {
 
     // API Lấy thông tin credential của bản thân
     @Get('me')
+    @UseGuards(GatewayIdentityGuard)
     async getMyProfile(@Headers('x-user-payload') userPayload: string) {
         return this.authService.getMyProfile(userPayload);
     }
 
     // API Cập nhật email của bản thân
     @Patch('me/email')
+    @UseGuards(GatewayIdentityGuard)
     async updateMyEmail(@Headers('x-user-payload') userPayload: string, @Body() body: { email: string }, @Headers('x-request-id') requestId: string) {
         return this.authService.updateMyEmail(userPayload, body.email, requestId);
     }
 
     // API Xóa tài khoản của bản thân
     @Delete('me')
+    @UseGuards(GatewayIdentityGuard)
     async deleteMyAccount(@Headers('x-user-payload') userPayload: string, @Headers('x-request-id') requestId: string) {
         return this.authService.deleteMyAccount(userPayload, requestId);
     }
 
     // API Admin lấy credential của user bất kỳ
     @Get('users/:userId')
+    @UseGuards(GatewayIdentityGuard)
+    @GatewayRoles('admin')
     async getUserProfileByAdmin(@Param('userId') userId: string) {
         return this.authService.getUserProfileByAdmin(userId);
     }
 
     // API Admin xóa tài khoản của user bất kỳ
     @Delete('users/:userId')
+    @UseGuards(GatewayIdentityGuard)
+    @GatewayRoles('admin')
     async deleteUserByAdmin(@Param('userId') userId: string, @Headers('x-request-id') requestId: string) {
         return this.authService.deleteUserByAdmin(userId, requestId);
     }
