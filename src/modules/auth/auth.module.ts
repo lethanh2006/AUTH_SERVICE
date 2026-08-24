@@ -7,6 +7,7 @@ import { AuthController } from './auth.controller';
 import { Credential, CredentialSchema } from '../../schemas/credential.schema';
 import { RedisModule } from '../redis/redis.module';
 import { RabbitMQModule } from '../rabbitmq/rabbitmq.module';
+import { requireJwtSecret } from '../../common/config/jwt-secret';
 @Module({
     imports: [
         // Đăng ký model Credential với MongooseModule để truy vấn DB
@@ -14,9 +15,10 @@ import { RabbitMQModule } from '../rabbitmq/rabbitmq.module';
         // Đăng ký dịch vụ tạo & xác thực JWT
         JwtModule.registerAsync({
             imports: [ConfigModule],
-            useFactory: async (configService: ConfigService) => ({
-                secret: configService.get<string>('JWT_SECRET') || 'your-super-secret-key-chatapp',
-                signOptions: { expiresIn: '7d' },
+            useFactory: (configService: ConfigService) => ({
+                secret: requireJwtSecret(configService.get<string>('JWT_SECRET')),
+                signOptions: { expiresIn: '7d', algorithm: 'HS256' },
+                verifyOptions: { algorithms: ['HS256'] },
             }),
             inject: [ConfigService],
         }),
