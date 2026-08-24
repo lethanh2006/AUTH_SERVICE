@@ -40,9 +40,7 @@ describe('GatewaySignatureService', () => {
   it('từ chối secret yếu', () => {
     expect(
       () =>
-        new GatewaySignatureService(
-          new ConfigService({ JWT_SECRET: 'short' }),
-        ),
+        new GatewaySignatureService(new ConfigService({ JWT_SECRET: 'short' })),
     ).toThrow('ít nhất 32 byte');
   });
 
@@ -51,8 +49,7 @@ describe('GatewaySignatureService', () => {
       () =>
         new GatewaySignatureService(
           new ConfigService({
-            AUTH_INTERNAL_SECRET:
-              'replace_with_at_least_32_random_characters',
+            AUTH_INTERNAL_SECRET: 'replace_with_at_least_32_random_characters',
             JWT_SECRET: secret,
           }),
         ),
