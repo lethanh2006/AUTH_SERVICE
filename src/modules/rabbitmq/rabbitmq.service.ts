@@ -5,7 +5,10 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { injectTraceHeaders } from '@nrapp/observability';
+import {
+  injectTraceHeaders,
+  withMessageSpan,
+} from '@nrapp/observability';
 import * as amqp from 'amqplib';
 import { SAFE_REQUEST_ID } from '../../common/middleware/request-id.middleware';
 
@@ -100,17 +103,30 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
     const channel = this.channel;
     if (!channel) throw new Error('RabbitMQ Channel is not initialized');
 
-    await channel.assertQueue(queueName, { durable: true });
-    const headers = injectTraceHeaders(
-      requestId && SAFE_REQUEST_ID.test(requestId)
-        ? { 'x-request-id': requestId }
-        : {},
+    await withMessageSpan(
+      `${queueName} publish`,
+      {},
+      async () => {
+        await channel.assertQueue(queueName, { durable: true });
+        const headers = injectTraceHeaders(
+          requestId && SAFE_REQUEST_ID.test(requestId)
+            ? { 'x-request-id': requestId }
+            : {},
+        );
+        channel.sendToQueue(queueName, Buffer.from(JSON.stringify(message)), {
+          persistent: true,
+          headers,
+        });
+      },
+      {
+        kind: 3,
+        attributes: {
+          'messaging.system': 'rabbitmq',
+          'messaging.destination.name': queueName,
+          'messaging.operation.type': 'publish',
+        },
+      },
     );
-    channel.sendToQueue(queueName, Buffer.from(JSON.stringify(message)), {
-      persistent: true,
-      headers,
-    });
-    this.logger.log(`Published message to queue ${queueName}`);
   }
 
   async onModuleDestroy() {
