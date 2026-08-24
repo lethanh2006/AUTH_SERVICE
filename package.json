@@ -26,6 +26,7 @@
     "@nestjs/jwt": "^11.0.2",
     "@nestjs/mongoose": "^11.0.4",
     "@nestjs/platform-express": "^11.0.1",
+    "@nrapp/observability": "file:../logger/packages/observability",
     "amqplib": "^2.0.1",
     "axios": "^1.18.1",
     "bcryptjs": "^3.0.3",

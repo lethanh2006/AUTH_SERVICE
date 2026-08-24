@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { appLogger } from './app-logger';
 
 export type LogDetails = Record<string, unknown>;
 
@@ -8,26 +9,22 @@ export type LogDetails = Record<string, unknown>;
  */
 @Injectable()
 export class StructuredLoggerService {
-  private readonly logger = new Logger('Auth');
-
   info(event: string, details: LogDetails): void {
-    this.logger.log(this.serialize(event, details));
+    appLogger.info({ ...details, 'event.name': event }, event);
   }
 
   warn(event: string, details: LogDetails): void {
-    this.logger.warn(this.serialize(event, details));
+    appLogger.warn({ ...details, 'event.name': event }, event);
   }
 
   error(event: string, details: LogDetails, stack?: string): void {
-    this.logger.error(this.serialize(event, details), stack);
-  }
-
-  private serialize(event: string, details: LogDetails): string {
-    return JSON.stringify({
-      timestamp: new Date().toISOString(),
-      service: 'auth',
+    appLogger.error(
+      {
+        ...details,
+        'event.name': event,
+        ...(stack ? { 'exception.stacktrace': stack } : {}),
+      },
       event,
-      ...details,
-    });
+    );
   }
 }
