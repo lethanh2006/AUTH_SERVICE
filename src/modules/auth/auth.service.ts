@@ -12,7 +12,7 @@ import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import axios from 'axios';
 import { APP_ROLES, AppRole } from '../../common/enums/app-role.enum';
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 @Injectable()
 export class AuthService {
     private readonly logger = new Logger(AuthService.name);
@@ -76,10 +76,11 @@ export class AuthService {
                 HttpStatus.TOO_MANY_REQUESTS,
             );
         }
-        // Tạo mã OTP ngẫu nhiên 6 số
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        // Sinh OTP bằng bộ tạo số ngẫu nhiên mật mã.
+        const otp = randomInt(100000, 1000000).toString();
         // Lưu OTP vào Redis tồn tại trong 5 phút
         await this.redisService.set(`login_otp:${email}`, otp, 5 * 60);
+        await this.redisService.del(`otp_attempts:${email}`);
         // Lưu Rate Limit khóa gửi OTP trong 60 giây
         await this.redisService.set(rateLimitKey, '1', 60);
         // Đẩy sự kiện gửi mail sang RabbitMQ
@@ -98,12 +99,32 @@ export class AuthService {
     async verifyOtp(verifyOtpDto: VerifyOtpDto, requestId: string) {
         const { email, otp: enteredOtp } = verifyOtpDto;
         const otpKey = `login_otp:${email}`;
+        const attemptKey = `otp_attempts:${email}`;
+        const currentAttempts = Number((await this.redisService.get(attemptKey)) ?? 0);
+        if (currentAttempts >= 5) {
+            throw new HttpException(
+                'Bạn đã nhập sai OTP quá nhiều lần. Vui lòng yêu cầu mã mới.',
+                HttpStatus.TOO_MANY_REQUESTS,
+            );
+        }
         const storedOtp = await this.redisService.get(otpKey);
         if (!storedOtp || storedOtp !== enteredOtp) {
+            const attempts = await this.redisService.incrementWithExpiry(
+                attemptKey,
+                5 * 60,
+            );
+            if (attempts >= 5) {
+                await this.redisService.del(otpKey);
+                throw new HttpException(
+                    'Bạn đã nhập sai OTP quá nhiều lần. Vui lòng yêu cầu mã mới.',
+                    HttpStatus.TOO_MANY_REQUESTS,
+                );
+            }
             throw new BadRequestException('Mã OTP không hợp lệ hoặc đã hết hạn!');
         }
         // Xóa OTP ngay sau khi xác thực thành công
         await this.redisService.del(otpKey);
+        await this.redisService.del(attemptKey);
         const cred = await this.credentialModel.findOne({ email });
         if (!cred) {
             throw new BadRequestException('Không tìm thấy tài khoản người dùng!');
