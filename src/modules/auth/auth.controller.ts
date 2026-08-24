@@ -6,6 +6,7 @@ import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { GatewayIdentityGuard } from '../../common/guards/gateway-identity.guard';
 import { GatewayRoles } from '../../common/decorators/gateway-roles.decorator';
 import { UpdateUserRoleDto } from './dto/update-user-role.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 
 @Controller('api/auth')
 export class AuthController {
@@ -53,8 +54,8 @@ export class AuthController {
     // API Làm mới Access Token
     @Post('refresh')
     @HttpCode(HttpStatus.OK)
-    async refresh(@Body() body: { token: string }, @Headers('x-request-id') requestId: string) {
-        return this.authService.refreshToken(body.token, requestId);
+    async refresh(@Body() body: RefreshTokenDto, @Headers('x-request-id') requestId: string) {
+        return this.authService.refreshToken(body.refreshToken, requestId);
     }
 
     // API Đăng nhập bằng Google

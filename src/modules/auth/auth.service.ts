@@ -12,9 +12,11 @@ import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import axios from 'axios';
 import { APP_ROLES, AppRole } from '../../common/enums/app-role.enum';
+import { randomUUID } from 'node:crypto';
 @Injectable()
 export class AuthService {
     private readonly logger = new Logger(AuthService.name);
+    private readonly refreshTokenTtlSeconds = 30 * 24 * 60 * 60;
     constructor(
         @InjectModel(Credential.name) private credentialModel: Model<CredentialDocument>,
         private jwtService: JwtService,
@@ -116,25 +118,10 @@ export class AuthService {
         } catch (err: any) {
             this.logger.warn(`Không lấy được thông tin username từ User Service: ${err.message}`);
         }
-        const payload = {
-            user: {
-                _id: cred._id,
-                email: cred.email,
-                username: username,
-                role: cred.role,
-            },
-        };
-        // Tạo JWT Token có thời hạn sử dụng 7 ngày
-        const accessToken = this.jwtService.sign(payload);
+        const session = await this.issueSessionTokens(cred, username);
         return {
             message: 'Xác thực thành công!',
-            token: accessToken,
-            user: {
-                _id: cred._id,
-                email: cred.email,
-                username: username,
-                role: cred.role,
-            },
+            ...session,
         };
     }
 
@@ -142,6 +129,9 @@ export class AuthService {
     async validateToken(token: string) {
         try {
             const decoded = this.jwtService.verify(token);
+            if (decoded.tokenType === 'refresh') {
+                return { valid: false, message: 'Refresh token không thể dùng để truy cập API' };
+            }
             const userPayload = decoded.user;
             if (!userPayload || !userPayload._id) {
                 return { valid: false, message: 'Token payload không hợp lệ' };
@@ -199,44 +189,47 @@ export class AuthService {
     }
 
     // 6. Làm mới Access Token
-    async refreshToken(token: string, requestId: string) {
+    async refreshToken(refreshToken: string, requestId: string) {
         try {
-            const decoded = this.jwtService.verify(token, { ignoreExpiration: true });
-            const userPayload = decoded.user;
-            if (!userPayload || !userPayload._id) {
-                throw new BadRequestException('Token payload không hợp lệ');
+            const decoded = this.jwtService.verify(refreshToken);
+            if (
+                decoded.tokenType !== 'refresh' ||
+                typeof decoded.sub !== 'string' ||
+                typeof decoded.jti !== 'string'
+            ) {
+                throw new UnauthorizedException('Refresh token không hợp lệ');
             }
-            const cred = await this.credentialModel.findById(userPayload._id);
+
+            const cred = await this.credentialModel.findById(decoded.sub);
             if (!cred) {
-                throw new BadRequestException('Không tìm thấy tài khoản người dùng!');
+                await this.redisService.del(this.refreshTokenKey(decoded.sub));
+                throw new UnauthorizedException('Tài khoản không còn tồn tại');
             }
-            
-            let username = userPayload.username;
+
+            let username = '';
             try {
                 const response = await axios.get(`${this.userServiceUrl}/api/user/internal/${cred._id}`, {
                     headers: { 'x-request-id': requestId },
                 });
-                username = response.data.user?.username || userPayload.username;
+                username = response.data.user?.username || '';
             } catch (err) {
                 // fallback
             }
 
-            const payload = {
-                user: {
-                    _id: cred._id,
-                    email: cred.email,
-                    role: cred.role,
-                    username,
-                },
-            };
-            const newToken = this.jwtService.sign(payload);
+            const session = await this.issueSessionTokens(
+                cred,
+                username,
+                decoded.jti,
+            );
             return {
                 message: 'Làm mới token thành công!',
-                token: newToken,
-                user: payload.user,
+                ...session,
             };
         } catch (err: any) {
-            throw new BadRequestException('Token không hợp lệ hoặc không thể refresh: ' + err.message);
+            if (err instanceof UnauthorizedException) throw err;
+            throw new UnauthorizedException(
+                'Refresh token không hợp lệ hoặc đã hết hạn',
+            );
         }
     }
 
@@ -297,19 +290,10 @@ export class AuthService {
                 // fallback
             }
 
-            const payload = {
-                user: {
-                    _id: cred._id,
-                    email: cred.email,
-                    role: cred.role,
-                    username,
-                },
-            };
-            const accessToken = this.jwtService.sign(payload);
+            const session = await this.issueSessionTokens(cred, username);
             return {
                 message: 'Đăng nhập bằng Google thành công!',
-                token: accessToken,
-                user: payload.user,
+                ...session,
             };
         } catch (error: any) {
             throw new BadRequestException('Đăng nhập Google thất bại: ' + (error.response?.data?.error_description || error.message));
@@ -381,6 +365,7 @@ export class AuthService {
         if (!cred) {
             throw new BadRequestException('Không tìm thấy tài khoản người dùng!');
         }
+        await this.redisService.del(this.refreshTokenKey(String(user._id)));
 
         try {
             await this.rabbitMQService.publish('user-profile-sync', {
@@ -415,6 +400,7 @@ export class AuthService {
         if (!cred) {
             throw new BadRequestException('Không tìm thấy tài khoản người dùng!');
         }
+        await this.redisService.del(this.refreshTokenKey(userId));
 
         try {
             await this.rabbitMQService.publish('user-profile-sync', {
@@ -428,5 +414,54 @@ export class AuthService {
         return {
             message: 'Admin xóa tài khoản người dùng thành công!',
         };
+    }
+
+    private async issueSessionTokens(
+        cred: CredentialDocument,
+        username: string,
+        currentRefreshTokenId?: string,
+    ) {
+        const user = {
+            _id: cred._id,
+            email: cred.email,
+            username,
+            role: cred.role,
+        };
+        const token = this.jwtService.sign({ user, tokenType: 'access' });
+        const refreshTokenId = randomUUID();
+        const refreshToken = this.jwtService.sign(
+            {
+                sub: String(cred._id),
+                jti: refreshTokenId,
+                tokenType: 'refresh',
+            },
+            { expiresIn: this.refreshTokenTtlSeconds },
+        );
+        const refreshKey = this.refreshTokenKey(String(cred._id));
+        if (currentRefreshTokenId) {
+            const rotated = await this.redisService.rotate(
+                refreshKey,
+                currentRefreshTokenId,
+                refreshTokenId,
+                this.refreshTokenTtlSeconds,
+            );
+            if (!rotated) {
+                throw new UnauthorizedException(
+                    'Refresh token đã bị thu hồi hoặc thay thế',
+                );
+            }
+        } else {
+            await this.redisService.set(
+                refreshKey,
+                refreshTokenId,
+                this.refreshTokenTtlSeconds,
+            );
+        }
+
+        return { token, refreshToken, user };
+    }
+
+    private refreshTokenKey(userId: string): string {
+        return `refresh_token:${userId}`;
     }
 }

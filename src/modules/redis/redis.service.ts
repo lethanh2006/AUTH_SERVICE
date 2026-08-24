@@ -36,6 +36,32 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         await this.client.del(key);
     }
 
+    async rotate(
+        key: string,
+        expectedValue: string,
+        replacementValue: string,
+        ttlSeconds: number,
+    ): Promise<boolean> {
+        const result = await this.client.eval(
+            `
+                if redis.call('GET', KEYS[1]) == ARGV[1] then
+                    redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+                    return 1
+                end
+                return 0
+            `,
+            {
+                keys: [key],
+                arguments: [
+                    expectedValue,
+                    replacementValue,
+                    String(ttlSeconds),
+                ],
+            },
+        );
+        return result === 1;
+    }
+
     async onModuleDestroy() {
         await this.client.disconnect();
     }
