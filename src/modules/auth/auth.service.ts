@@ -11,6 +11,7 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import axios from 'axios';
+import { APP_ROLES, AppRole } from '../../common/enums/app-role.enum';
 @Injectable()
 export class AuthService {
     private readonly logger = new Logger(AuthService.name);
@@ -35,7 +36,7 @@ export class AuthService {
         const newCred = await this.credentialModel.create({
             email,
             passwordHash,
-            role: 'user',
+            role: AppRole.USER,
         });
         try {
             await this.rabbitMQService.publish('user-profile-sync', {
@@ -170,12 +171,12 @@ export class AuthService {
 
     // 5. Cập nhật role của user
     async updateUserRole(userId: string, newRole: string, requestId: string) {
-        const allowedRoles = ['admin', 'user', 'manager'];
-        if (!allowedRoles.includes(newRole)) {
+        const normalizedRole = newRole.trim().toLowerCase() as AppRole;
+        if (!APP_ROLES.includes(normalizedRole)) {
             throw new BadRequestException(`Vai trò ${newRole} không hợp lệ!`);
         }
 
-        const cred = await this.credentialModel.findByIdAndUpdate(userId, { role: newRole }, { new: true });
+        const cred = await this.credentialModel.findByIdAndUpdate(userId, { role: normalizedRole }, { new: true });
         if (!cred) {
             throw new BadRequestException('Không tìm thấy tài khoản người dùng!');
         }
@@ -184,7 +185,7 @@ export class AuthService {
             await this.rabbitMQService.publish('user-profile-sync', {
                 action: 'UPDATE_ROLE',
                 userId,
-                role: newRole,
+                role: normalizedRole,
             }, requestId);
         } catch (err: any) {
             this.logger.warn(`Đồng bộ cập nhật role sang User Service qua RabbitMQ thất bại: ${err.message}`);
@@ -193,7 +194,7 @@ export class AuthService {
         return {
             message: 'Cập nhật vai trò người dùng thành công!',
             userId,
-            role: newRole,
+            role: normalizedRole,
         };
     }
 
@@ -267,7 +268,7 @@ export class AuthService {
                 cred = await this.credentialModel.create({
                     email,
                     passwordHash,
-                    role: 'user',
+                    role: AppRole.USER,
                 });
                 isNew = true;
             }

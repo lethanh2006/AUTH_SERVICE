@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
+import { APP_ROLES, AppRole } from '../common/enums/app-role.enum';
 
 export type CredentialDocument = Credential & Document;
 
@@ -11,7 +12,7 @@ export class Credential {
     @Prop({ required: true })
     passwordHash!: string;
 
-    @Prop({ required: true, default: 'user' })
+    @Prop({ required: true, default: AppRole.USER, enum: APP_ROLES })
     role!: string;
 }
 

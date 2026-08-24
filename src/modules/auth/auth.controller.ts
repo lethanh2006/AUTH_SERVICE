@@ -5,6 +5,7 @@ import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { GatewayIdentityGuard } from '../../common/guards/gateway-identity.guard';
 import { GatewayRoles } from '../../common/decorators/gateway-roles.decorator';
+import { UpdateUserRoleDto } from './dto/update-user-role.dto';
 
 @Controller('api/auth')
 export class AuthController {
@@ -45,7 +46,7 @@ export class AuthController {
     @HttpCode(HttpStatus.OK)
     @UseGuards(GatewayIdentityGuard)
     @GatewayRoles('admin')
-    async updateUserRole(@Param('id') id: string, @Body() body: { role: string }, @Headers('x-request-id') requestId: string) {
+    async updateUserRole(@Param('id') id: string, @Body() body: UpdateUserRoleDto, @Headers('x-request-id') requestId: string) {
         return this.authService.updateUserRole(id, body.role, requestId);
     }
 
