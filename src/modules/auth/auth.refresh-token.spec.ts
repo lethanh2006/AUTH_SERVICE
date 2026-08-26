@@ -74,6 +74,7 @@ describe('AuthService refresh token', () => {
   });
 
   it('từ chối refresh token đã bị thay thế', async () => {
+    jest.spyOn(axios, 'get').mockRejectedValue(new Error('user unavailable'));
     const { service, credentialModel, jwtService } = createService(false);
 
     await expect(
