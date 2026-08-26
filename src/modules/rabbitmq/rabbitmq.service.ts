@@ -5,19 +5,16 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  injectTraceHeaders,
-  withMessageSpan,
-} from '@nrapp/observability';
+import { injectTraceHeaders, withMessageSpan } from '@nrapp/observability';
 import * as amqp from 'amqplib';
 import { SAFE_REQUEST_ID } from '../../common/middleware/request-id.middleware';
 
 @Injectable()
 export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
-  private connection?: amqp.ChannelModel;  // kết nối tới RabbitMQ server
-  private channel?: amqp.Channel;  // "kênh" để gửi/nhận tin, làm việc thật sự qua đây
-  private connectionPromise?: Promise<void>;   // tránh việc connect nhiều lần cùng lúc
-  private shuttingDown = false;  // cờ đánh dấu app đang tắt
+  private connection?: amqp.ChannelModel; // kết nối tới RabbitMQ server
+  private channel?: amqp.Channel; // "kênh" để gửi/nhận tin, làm việc thật sự qua đây
+  private connectionPromise?: Promise<void>; // tránh việc connect nhiều lần cùng lúc
+  private shuttingDown = false; // cờ đánh dấu app đang tắt
   private readonly logger = new Logger(RabbitMQService.name);
 
   constructor(private configService: ConfigService) {}
