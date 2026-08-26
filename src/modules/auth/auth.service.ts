@@ -23,6 +23,28 @@ import { VerifyOtpDto } from './dto/verify-otp.dto';
 import axios from 'axios';
 import { APP_ROLES, AppRole } from '../../common/enums/app-role.enum';
 import { randomInt, randomUUID } from 'node:crypto';
+import { toError } from '../../common/utils/error.util';
+import {
+  GatewayIdentity,
+  parseGatewayIdentity,
+} from '../../common/interfaces/gateway-identity.interface';
+
+interface UserServiceResponse {
+  user?: {
+    username?: string;
+  };
+}
+
+interface GoogleProfileResponse {
+  email?: string;
+  name?: string;
+  given_name?: string;
+}
+
+interface GoogleErrorResponse {
+  error_description?: string;
+}
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -65,9 +87,10 @@ export class AuthService {
         },
         requestId,
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const error = toError(err);
       this.logger.error(
-        `Đồng bộ sang User Service qua RabbitMQ thất bại: ${err.message}`,
+        `Đồng bộ sang User Service qua RabbitMQ thất bại: ${error.message}`,
       );
     }
     return {
@@ -154,16 +177,17 @@ export class AuthService {
     // Lấy thông tin username từ User Service thông qua API internal
     let username = '';
     try {
-      const response = await axios.get(
-        `${this.userServiceUrl}/api/user/internal/${cred._id}`,
+      const response = await axios.get<UserServiceResponse>(
+        `${this.userServiceUrl}/api/user/internal/${String(cred._id)}`,
         {
           headers: { 'x-request-id': requestId },
         },
       );
       username = response.data.user?.username || '';
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const error = toError(err);
       this.logger.warn(
-        `Không lấy được thông tin username từ User Service: ${err.message}`,
+        `Không lấy được thông tin username từ User Service: ${error.message}`,
       );
     }
     const session = await this.issueSessionTokens(cred, username);
@@ -176,15 +200,15 @@ export class AuthService {
   // 4. Introspect Endpoint để Gateway kiểm tra JWT
   async validateToken(token: string) {
     try {
-      const decoded = this.jwtService.verify(token);
+      const decoded = this.jwtService.verify<Record<string, unknown>>(token);
       if (decoded.tokenType === 'refresh') {
         return {
           valid: false,
           message: 'Refresh token không thể dùng để truy cập API',
         };
       }
-      const userPayload = decoded.user;
-      if (!userPayload || !userPayload._id) {
+      const userPayload = parseGatewayIdentity(decoded.user);
+      if (!userPayload) {
         return { valid: false, message: 'Token payload không hợp lệ' };
       }
 
@@ -204,10 +228,10 @@ export class AuthService {
           role: credential.role,
         },
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
       return {
         valid: false,
-        message: err?.message || String(err),
+        message: toError(err).message,
       };
     }
   }
@@ -238,9 +262,10 @@ export class AuthService {
         },
         requestId,
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const error = toError(err);
       this.logger.warn(
-        `Đồng bộ cập nhật role sang User Service qua RabbitMQ thất bại: ${err.message}`,
+        `Đồng bộ cập nhật role sang User Service qua RabbitMQ thất bại: ${error.message}`,
       );
     }
 
@@ -254,44 +279,42 @@ export class AuthService {
   // 6. Làm mới Access Token
   async refreshToken(refreshToken: string, requestId: string) {
     try {
-      const decoded = this.jwtService.verify(refreshToken);
+      const decoded =
+        this.jwtService.verify<Record<string, unknown>>(refreshToken);
+      const { tokenType, sub, jti } = decoded;
       if (
-        decoded.tokenType !== 'refresh' ||
-        typeof decoded.sub !== 'string' ||
-        typeof decoded.jti !== 'string'
+        tokenType !== 'refresh' ||
+        typeof sub !== 'string' ||
+        typeof jti !== 'string'
       ) {
         throw new UnauthorizedException('Refresh token không hợp lệ');
       }
 
-      const cred = await this.credentialModel.findById(decoded.sub);
+      const cred = await this.credentialModel.findById(sub);
       if (!cred) {
-        await this.redisService.del(this.refreshTokenKey(decoded.sub));
+        await this.redisService.del(this.refreshTokenKey(sub));
         throw new UnauthorizedException('Tài khoản không còn tồn tại');
       }
 
       let username = '';
       try {
-        const response = await axios.get(
-          `${this.userServiceUrl}/api/user/internal/${cred._id}`,
+        const response = await axios.get<UserServiceResponse>(
+          `${this.userServiceUrl}/api/user/internal/${String(cred._id)}`,
           {
             headers: { 'x-request-id': requestId },
           },
         );
         username = response.data.user?.username || '';
-      } catch (err) {
+      } catch {
         // fallback
       }
 
-      const session = await this.issueSessionTokens(
-        cred,
-        username,
-        decoded.jti,
-      );
+      const session = await this.issueSessionTokens(cred, username, jti);
       return {
         message: 'Làm mới token thành công!',
         ...session,
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof UnauthorizedException) throw err;
       throw new UnauthorizedException(
         'Refresh token không hợp lệ hoặc đã hết hạn',
@@ -305,20 +328,22 @@ export class AuthService {
       let email: string = '';
       let name: string = '';
       try {
-        const res = await axios.get(
+        const res = await axios.get<GoogleProfileResponse>(
           `https://oauth2.googleapis.com/tokeninfo?id_token=${token}`,
         );
-        email = res.data.email;
-        name = res.data.name || res.data.given_name || email.split('@')[0];
-      } catch (err) {
-        const res = await axios.get(
+        email = res.data.email || '';
+        name =
+          res.data.name || res.data.given_name || email.split('@')[0] || '';
+      } catch {
+        const res = await axios.get<GoogleProfileResponse>(
           'https://www.googleapis.com/oauth2/v3/userinfo',
           {
             headers: { Authorization: `Bearer ${token}` },
           },
         );
-        email = res.data.email;
-        name = res.data.name || res.data.given_name || email.split('@')[0];
+        email = res.data.email || '';
+        name =
+          res.data.name || res.data.given_name || email.split('@')[0] || '';
       }
 
       if (!email) {
@@ -352,23 +377,24 @@ export class AuthService {
             },
             requestId,
           );
-        } catch (err: any) {
+        } catch (err: unknown) {
+          const error = toError(err);
           this.logger.error(
-            `Đăng ký sự kiện tạo profile Google thất bại: ${err.message}`,
+            `Đăng ký sự kiện tạo profile Google thất bại: ${error.message}`,
           );
         }
       }
 
       let username = name;
       try {
-        const response = await axios.get(
-          `${this.userServiceUrl}/api/user/internal/${cred._id}`,
+        const response = await axios.get<UserServiceResponse>(
+          `${this.userServiceUrl}/api/user/internal/${String(cred._id)}`,
           {
             headers: { 'x-request-id': requestId },
           },
         );
         username = response.data.user?.username || name;
-      } catch (err) {
+      } catch {
         // fallback
       }
 
@@ -377,10 +403,12 @@ export class AuthService {
         message: 'Đăng nhập bằng Google thành công!',
         ...session,
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMessage = axios.isAxiosError<GoogleErrorResponse>(error)
+        ? error.response?.data?.error_description || error.message
+        : toError(error).message;
       throw new BadRequestException(
-        'Đăng nhập Google thất bại: ' +
-          (error.response?.data?.error_description || error.message),
+        `Đăng nhập Google thất bại: ${errorMessage}`,
       );
     }
   }
@@ -390,8 +418,7 @@ export class AuthService {
     if (!userPayloadBase64) {
       throw new UnauthorizedException('Thiếu payload thông tin người dùng');
     }
-    const userStr = Buffer.from(userPayloadBase64, 'base64').toString('utf8');
-    const user = JSON.parse(userStr);
+    const user = this.parseUserPayload(userPayloadBase64);
 
     const cred = await this.credentialModel.findById(user._id);
     if (!cred) {
@@ -413,8 +440,7 @@ export class AuthService {
     if (!userPayloadBase64) {
       throw new UnauthorizedException('Thiếu payload thông tin người dùng');
     }
-    const userStr = Buffer.from(userPayloadBase64, 'base64').toString('utf8');
-    const user = JSON.parse(userStr);
+    const user = this.parseUserPayload(userPayloadBase64);
 
     const existing = await this.credentialModel.findOne({
       email,
@@ -445,9 +471,10 @@ export class AuthService {
         },
         requestId,
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const error = toError(err);
       this.logger.error(
-        `Đăng ký sự kiện cập nhật email thất bại: ${err.message}`,
+        `Đăng ký sự kiện cập nhật email thất bại: ${error.message}`,
       );
     }
 
@@ -462,8 +489,7 @@ export class AuthService {
     if (!userPayloadBase64) {
       throw new UnauthorizedException('Thiếu payload thông tin người dùng');
     }
-    const userStr = Buffer.from(userPayloadBase64, 'base64').toString('utf8');
-    const user = JSON.parse(userStr);
+    const user = this.parseUserPayload(userPayloadBase64);
 
     const cred = await this.credentialModel.findByIdAndDelete(user._id);
     if (!cred) {
@@ -480,9 +506,10 @@ export class AuthService {
         },
         requestId,
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const error = toError(err);
       this.logger.error(
-        `Đăng ký sự kiện xóa tài khoản thất bại: ${err.message}`,
+        `Đăng ký sự kiện xóa tài khoản thất bại: ${error.message}`,
       );
     }
 
@@ -521,9 +548,10 @@ export class AuthService {
         },
         requestId,
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const error = toError(err);
       this.logger.error(
-        `Đăng ký sự kiện admin xóa tài khoản thất bại: ${err.message}`,
+        `Đăng ký sự kiện admin xóa tài khoản thất bại: ${error.message}`,
       );
     }
 
@@ -579,5 +607,17 @@ export class AuthService {
 
   private refreshTokenKey(userId: string): string {
     return `refresh_token:${userId}`;
+  }
+
+  private parseUserPayload(userPayloadBase64: string): GatewayIdentity {
+    const userJson = Buffer.from(userPayloadBase64, 'base64').toString('utf8');
+    const user = parseGatewayIdentity(JSON.parse(userJson) as unknown);
+    if (!user) {
+      throw new UnauthorizedException(
+        'Payload thông tin người dùng không hợp lệ',
+      );
+    }
+
+    return user;
   }
 }
