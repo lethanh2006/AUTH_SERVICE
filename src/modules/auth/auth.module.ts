@@ -9,7 +9,6 @@ import { RedisModule } from '../redis/redis.module';
 import { RabbitMQModule } from '../rabbitmq/rabbitmq.module';
 import { requireJwtSecret } from '../../common/config/jwt-secret';
 import { GatewayIdentityGuard } from '../../common/guards/gateway-identity.guard';
-import { GatewaySignatureService } from '../../common/security/gateway-signature.service';
 @Module({
   imports: [
     // Đăng ký model Credential với MongooseModule để truy vấn DB
@@ -30,7 +29,7 @@ import { GatewaySignatureService } from '../../common/security/gateway-signature
     RabbitMQModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, GatewayIdentityGuard, GatewaySignatureService],
+  providers: [AuthService, GatewayIdentityGuard],
   exports: [AuthService],
 })
 export class AuthModule {}
