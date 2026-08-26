@@ -5,14 +5,15 @@ dns.setServers(['8.8.8.8', '8.8.4.4']);
 
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { PinoNestLogger, shutdownTelemetry } from '@nrapp/observability';
+import {
+  flushLoggerAndShutdownTelemetry,
+  logAndRecordException,
+} from '@nrapp/observability';
 import { AppModule } from './app.module';
-import { appLogger } from './common/observability/app-logger';
+import { appLogger, nestLogger } from './common/observability/app-logger';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, {
-    logger: new PinoNestLogger(appLogger, 'NestApplication'),
-  });
+  const app = await NestFactory.create(AppModule, { logger: nestLogger });
   app.enableShutdownHooks();
 
   // Kích hoạt auto-validate dữ liệu đầu vào theo class DTO
@@ -33,17 +34,23 @@ async function bootstrap(): Promise<void> {
   );
 }
 
-void bootstrap().catch(async (exception: unknown) => {
-  const error =
-    exception instanceof Error ? exception : new Error(String(exception));
-  appLogger.fatal(
+void bootstrap().catch(async (error: unknown) => {
+  logAndRecordException(
+    appLogger,
+    'process.bootstrap.failed',
+    error,
+    {},
     {
-      'event.name': 'service.bootstrap.failed',
-      error,
+      message: 'Không thể khởi động dịch vụ xác thực',
+      classification: {
+        statusCode: 500,
+        code: 'BOOTSTRAP_FAILED',
+        expected: false,
+        retryable: false,
+        logLevel: 'fatal',
+      },
     },
-    'Không thể khởi động dịch vụ xác thực',
   );
-  appLogger.flush();
-  await shutdownTelemetry(3_000);
+  await flushLoggerAndShutdownTelemetry(appLogger, 3_000);
   process.exitCode = 1;
 });
