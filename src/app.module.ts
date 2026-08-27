@@ -13,7 +13,7 @@ import { HealthModule } from './modules/health/health.module';
     // Load file môi trường .env (cần cấu hình toàn cục isGlobal: true)
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '.env',
+      envFilePath: ['../.env', '.env'],
     }),
     DatabaseModule,
     AuthModule,
