@@ -1,86 +1,48 @@
-# CI trên GitHub
+# CI/CD trên GitHub
 
-Workflow [ci.yml](workflows/ci.yml) chạy khi push code, mở/cập nhật Pull Request
-hoặc chọn **Actions → CI → Run workflow** (khi workflow đã có trên nhánh mặc định).
+Workflow trong repo này là caller mỏng; logic thực thi nằm trong Logger:
 
-CI dùng Node.js 22, cài dependency bằng `npm ci`, rồi chạy lint, unit test và
-build. Lỗi ở bước nào sẽ làm CI thất bại. CI không deploy, không chạy migration
-và không cần VPS, database, RabbitMQ hay file `.env` thật.
+- [Reusable Node CI](https://github.com/lethanh2006/Logger/blob/d274b289a561fd7c6e3637995482a75a89af4773/.github/workflows/reusable-node-ci.yml)
+- [Reusable VPS CD](https://github.com/lethanh2006/Logger/blob/d274b289a561fd7c6e3637995482a75a89af4773/.github/workflows/reusable-vps-cd.yml)
 
-## Package observability dùng chung
+Caller và `platform-ref` được pin cùng full commit SHA, không dùng `@main`.
+Nhờ vậy một thay đổi nền tảng không âm thầm ảnh hưởng mọi repository.
 
-Repo này phụ thuộc `file:../logger/packages/observability`. Runner checkout hai
-repo theo cấu trúc:
+## CI
 
-```text
-workspace/
-├── service/  ← repo hiện tại
-└── logger/   ← lethanh2006/Logger, chỉ lấy packages/observability
-```
+Mỗi push, Pull Request hoặc lần chạy thủ công sẽ cài dependency bằng `npm ci`,
+chặn lỗ hổng production mức critical, lint, kiểm tra format, chạy test và build.
+CI không cần `.env` thật hoặc các dependency runtime như MongoDB/RabbitMQ.
 
-Workflow mặc định dùng commit Logger
-`108e1a5543a8182c3e00630fde73d2325a030dfd` để các lần chạy dùng cùng phiên bản.
-Khi cập nhật shared package, push Logger trước rồi đổi `LOGGER_REF` sang commit
-mới trong **Settings → Secrets and variables → Actions → Variables**, hoặc sửa
-SHA mặc định trong workflow. Push service hoặc chạy lại CI để kiểm tra phiên bản
-mới; push Logger không tự kích hoạt CI của repo này.
-
-Cấu hình tùy chọn:
-
-| Loại | Tên | Khi nào dùng |
-| --- | --- | --- |
-| Variable | `LOGGER_REPOSITORY` | Logger chuyển repo; giá trị dạng `owner/repo`. |
-| Variable | `LOGGER_REF` | Nâng phiên bản Logger; nên dùng commit SHA đầy đủ. |
-| Secret | `LOGGER_READ_TOKEN` | Logger là private; dùng fine-grained PAT có quyền **Contents: Read-only** trên repo Logger. |
-
-Token mặc định của GitHub Actions chỉ có quyền trên repo đang chạy. Với Logger
-public không cần tạo secret; với Logger private, thêm `LOGGER_READ_TOKEN` ở từng
-repo service (hoặc organization secret được cấp cho các repo này). Không đặt
-token trực tiếp trong YAML.
-
-## Chạy tương tự ở local
-
-Từ thư mục service, với repo Logger nằm bên cạnh:
+Chạy tương tự ở local:
 
 ```bash
 npm ci --prefix ../logger/packages/observability --no-audit --no-fund
 npm ci --no-audit --no-fund
+npm audit --omit=dev --audit-level=critical
 npm run lint
-CI=true NODE_ENV=test OBSERVABILITY_LOAD_DOTENV=false OTEL_SDK_DISABLED=true LOG_FORMAT=json npm test -- --ci --runInBand
+npm run format:check
+npm test -- --ci --runInBand
 npm run build
 ```
 
-Không có bước smoke test/e2e cần hạ tầng trong workflow này. Kết quả từng bước
-hiển thị trong tab **Actions** và phần **Checks** của Pull Request.
-
-Tham khảo: [GitHub Actions cho Node.js](https://docs.github.com/en/actions/tutorials/build-and-test-code/nodejs),
-[checkout nhiều repo](https://github.com/actions/checkout#checkout-multiple-repos-side-by-side).
-
 ## CD lên VPS
 
-Workflow [cd.yml](workflows/cd.yml) chỉ chạy sau khi workflow **CI** thành công
-cho một lệnh push vào nhánh mặc định. CD checkout đúng commit SHA đã qua CI,
-build image `linux/amd64` của service `auth`, rồi truyền image qua SSH
-đến VPS. Không có file `.env` hoặc secret ứng dụng nào được đưa vào image.
+Sau CI thành công của một push vào nhánh mặc định, caller `cd.yml` gọi
+reusable VPS CD. Pipeline từ chối SHA cũ không còn là HEAD, build image
+`linux/amd64`, kiểm tra archive, retry SSH tối đa ba lần và giao image cho
+receiver. Receiver chỉ cho phép service `auth`, chờ healthcheck và tự rollback.
 
-Trên VPS, SSH key CD bị giới hạn bằng forced command. Receiver chỉ chấp nhận tám
-service đang chạy, khóa để hai deployment không chạy đồng thời, chỉ recreate
-service hiện tại, chờ healthcheck và tự rollback về image trước nếu deployment
-thất bại. Payment không nằm trong CD.
+Repository cần secret `VPS_SSH_PRIVATE_KEY` chứa đúng private key bị giới hạn
+cho service này. Không dùng key cá nhân hoặc key của service khác.
 
-Workflow cần secret `VPS_SSH_PRIVATE_KEY` trong repository hoặc environment
-`production`. Repo này dùng private key riêng tại
-`~/.ssh/nrapp_github_cd_auth`; không dùng key SSH cá nhân hoặc key của
-service khác. Host key của VPS được pin trong [known_hosts](known_hosts), vì
-vậy workflow sẽ dừng nếu host key thay đổi.
+## Nâng phiên bản nền tảng
 
-Sau khi cấu hình secret và push commit lên nhánh mặc định:
+1. Commit và push thay đổi reusable workflow/asset vào Logger.
+2. Lấy full SHA Logger mới và cập nhật cả `uses:` lẫn `platform-ref` trên
+   một service canary.
+3. Chờ CI/CD canary và healthcheck VPS thành công.
+4. Cập nhật cùng SHA cho các service còn lại.
 
-1. Mở tab **Actions**, chờ workflow **CI** xanh.
-2. Workflow **CD** tự khởi chạy.
-3. Mở job **Build image and deploy to VPS** để xem build, healthcheck hoặc
-   rollback.
-4. Kiểm tra API tại
-   [api-vps.thanhlelmtp2006.id.vn](https://api-vps.thanhlelmtp2006.id.vn/health).
-
-Không chạy CD từ Pull Request, CI thất bại, nhánh phụ hoặc Dependabot.
+Các chi tiết bảo mật, receiver và rollback nằm trong
+[Logger README](https://github.com/lethanh2006/Logger/blob/d274b289a561fd7c6e3637995482a75a89af4773/README.md).
