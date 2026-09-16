@@ -1,0 +1,120 @@
+name: CD
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-production
+  cancel-in-progress: false
+
+env:
+  SERVICE_NAME: auth
+  DEPLOY_REVISION: ${{ github.event.workflow_run.head_sha }}
+  VPS_HOST: 103.116.52.35
+  VPS_PORT: "22"
+  VPS_USER: deploy
+
+jobs:
+  deploy:
+    name: Build image and deploy to VPS
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment:
+      name: production
+      url: https://api-vps.thanhlelmtp2006.id.vn
+
+    steps:
+      - name: Checkout service revision that passed CI
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          path: service
+          persist-credentials: false
+
+      - name: Checkout shared observability package
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ vars.LOGGER_REPOSITORY || 'lethanh2006/Logger' }}
+          ref: ${{ vars.LOGGER_REF || '108e1a5543a8182c3e00630fde73d2325a030dfd' }}
+          token: ${{ secrets.LOGGER_READ_TOKEN || github.token }}
+          path: logger
+          sparse-checkout: packages/observability
+          persist-credentials: false
+
+      - name: Validate deployment secret
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$VPS_SSH_PRIVATE_KEY" ]]; then
+            echo "::error::Missing VPS_SSH_PRIVATE_KEY secret"
+            exit 1
+          fi
+
+      - name: Build production image
+        run: |
+          set -euo pipefail
+          image="nrapp/${SERVICE_NAME}:vps-lab-001"
+
+          docker buildx inspect --bootstrap
+          docker buildx build \
+            --platform linux/amd64 \
+            --load \
+            --file service/.github/docker/node-service.Dockerfile \
+            --build-arg SERVICE_DIR=service \
+            --label "org.opencontainers.image.revision=${DEPLOY_REVISION}" \
+            --tag "$image" \
+            .
+
+          test "$(docker image inspect --format '{{.Architecture}}' "$image")" = "amd64"
+
+      - name: Package image
+        run: |
+          set -euo pipefail
+          image="nrapp/${SERVICE_NAME}:vps-lab-001"
+          archive="$RUNNER_TEMP/nrapp-image.tar.gz"
+
+          docker image save "$image" | gzip -1 > "$archive"
+          gzip -t "$archive"
+          sha256sum "$archive"
+
+      - name: Configure restricted SSH key
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" \
+            | tr -d '\r' \
+            > "$HOME/.ssh/nrapp_github_cd"
+          chmod 600 "$HOME/.ssh/nrapp_github_cd"
+          install -m 600 service/.github/known_hosts "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -f "$HOME/.ssh/nrapp_github_cd" >/dev/null
+
+      - name: Deploy and wait for healthcheck
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -T \
+            -p "$VPS_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=10 \
+            -i "$HOME/.ssh/nrapp_github_cd" \
+            "$VPS_USER@$VPS_HOST" \
+            "deploy ${SERVICE_NAME} ${DEPLOY_REVISION}" \
+            < "$RUNNER_TEMP/nrapp-image.tar.gz"
+
+      - name: Remove SSH private key
+        if: always()
+        run: rm -f -- "$HOME/.ssh/nrapp_github_cd"

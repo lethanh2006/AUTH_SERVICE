@@ -55,3 +55,32 @@ hiển thị trong tab **Actions** và phần **Checks** của Pull Request.
 
 Tham khảo: [GitHub Actions cho Node.js](https://docs.github.com/en/actions/tutorials/build-and-test-code/nodejs),
 [checkout nhiều repo](https://github.com/actions/checkout#checkout-multiple-repos-side-by-side).
+
+## CD lên VPS
+
+Workflow [cd.yml](workflows/cd.yml) chỉ chạy sau khi workflow **CI** thành công
+cho một lệnh push vào nhánh mặc định. CD checkout đúng commit SHA đã qua CI,
+build image `linux/amd64` của service `auth`, rồi truyền image qua SSH
+đến VPS. Không có file `.env` hoặc secret ứng dụng nào được đưa vào image.
+
+Trên VPS, SSH key CD bị giới hạn bằng forced command. Receiver chỉ chấp nhận tám
+service đang chạy, khóa để hai deployment không chạy đồng thời, chỉ recreate
+service hiện tại, chờ healthcheck và tự rollback về image trước nếu deployment
+thất bại. Payment không nằm trong CD.
+
+Workflow cần secret `VPS_SSH_PRIVATE_KEY` trong repository hoặc environment
+`production`. Repo này dùng private key riêng tại
+`~/.ssh/nrapp_github_cd_auth`; không dùng key SSH cá nhân hoặc key của
+service khác. Host key của VPS được pin trong [known_hosts](known_hosts), vì
+vậy workflow sẽ dừng nếu host key thay đổi.
+
+Sau khi cấu hình secret và push commit lên nhánh mặc định:
+
+1. Mở tab **Actions**, chờ workflow **CI** xanh.
+2. Workflow **CD** tự khởi chạy.
+3. Mở job **Build image and deploy to VPS** để xem build, healthcheck hoặc
+   rollback.
+4. Kiểm tra API tại
+   [api-vps.thanhlelmtp2006.id.vn](https://api-vps.thanhlelmtp2006.id.vn/health).
+
+Không chạy CD từ Pull Request, CI thất bại, nhánh phụ hoặc Dependabot.
