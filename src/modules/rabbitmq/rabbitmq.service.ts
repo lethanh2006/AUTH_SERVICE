@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   Injectable,
   OnModuleInit,
@@ -12,15 +13,15 @@ import { SAFE_REQUEST_ID } from '../../common/middleware/request-id.middleware';
 @Injectable()
 export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
   private connection?: amqp.ChannelModel; // kết nối tới RabbitMQ server
-  private channel?: amqp.Channel; // "kênh" để gửi/nhận tin, làm việc thật sự qua đây
+  private channel?: amqp.ConfirmChannel; // "kênh" để gửi/nhận tin, làm việc thật sự qua đây
   private connectionPromise?: Promise<void>; // tránh việc connect nhiều lần cùng lúc
   private shuttingDown = false; // cờ đánh dấu app đang tắt
   private readonly logger = new Logger(RabbitMQService.name);
 
   constructor(private configService: ConfigService) {}
 
-  async onModuleInit() {
-    await this.ensureConnection();
+  onModuleInit(): void {
+    void this.ensureConnection();
   }
 
   private ensureConnection(): Promise<void> {
@@ -60,7 +61,16 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
           username,
           password,
         });
-        const channel = await connection.createChannel();
+        if (this.shuttingDown) {
+          await connection.close().catch(() => undefined);
+          return;
+        }
+        const channel = await connection.createConfirmChannel();
+        if (this.shuttingDown) {
+          await channel.close().catch(() => undefined);
+          await connection.close().catch(() => undefined);
+          return;
+        }
 
         this.connection = connection;
         this.channel = channel;
@@ -70,6 +80,11 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
           this.logger.error(`RabbitMQ connection error: ${error.message}`);
         });
         connection.on('close', () => this.handleDisconnect(connection));
+        channel.on('close', () => {
+          if (this.channel !== channel) return;
+          this.handleDisconnect(connection);
+          void connection.close().catch(() => undefined);
+        });
         channel.on('error', (error) => {
           this.logger.error(`RabbitMQ channel error: ${error.message}`);
         });
@@ -100,12 +115,16 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
     void this.ensureConnection();
   }
 
+  isReady(): boolean {
+    return Boolean(this.channel) && !this.shuttingDown;
+  }
+
   async publish(
     queueName: string,
     message: unknown,
     requestId?: string,
+    traceHeaders?: Record<string, string>,
   ): Promise<void> {
-    await this.ensureConnection();
     const channel = this.channel;
     if (!channel) throw new Error('RabbitMQ Channel is not initialized');
 
@@ -114,14 +133,60 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
       {},
       async () => {
         await channel.assertQueue(queueName, { durable: true });
-        const headers = injectTraceHeaders(
-          requestId && SAFE_REQUEST_ID.test(requestId)
-            ? { 'x-request-id': requestId }
-            : {},
-        );
-        channel.sendToQueue(queueName, Buffer.from(JSON.stringify(message)), {
-          persistent: true,
-          headers,
+        const headers = {
+          ...injectTraceHeaders(
+            requestId && SAFE_REQUEST_ID.test(requestId)
+              ? { 'x-request-id': requestId }
+              : {},
+          ),
+          ...traceHeaders,
+        };
+        const messageId = randomUUID();
+        await new Promise<void>((resolve, reject) => {
+          const cleanup = () => {
+            clearTimeout(timer);
+            channel.off('return', onReturn);
+          };
+          const onReturn = (returned: amqp.Message) => {
+            if (returned.properties.messageId !== messageId) return;
+            cleanup();
+            reject(new Error('RabbitMQ message was not routed'));
+          };
+          const timer = setTimeout(() => {
+            cleanup();
+            reject(new Error('RabbitMQ publisher confirm timed out'));
+          }, 10000);
+          channel.on('return', onReturn);
+          try {
+            channel.sendToQueue(
+              queueName,
+              Buffer.from(JSON.stringify(message)),
+              {
+                persistent: true,
+                mandatory: true,
+                contentType: 'application/json',
+                messageId,
+                headers,
+              },
+              (error: unknown) => {
+                cleanup();
+                if (error)
+                  reject(
+                    error instanceof Error
+                      ? error
+                      : new Error('RabbitMQ publish failed'),
+                  );
+                else resolve();
+              },
+            );
+          } catch (error: unknown) {
+            cleanup();
+            reject(
+              error instanceof Error
+                ? error
+                : new Error('RabbitMQ publish failed'),
+            );
+          }
         });
       },
       {

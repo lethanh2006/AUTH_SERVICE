@@ -12,6 +12,13 @@ export class Credential {
   @Prop({ required: true })
   passwordHash!: string;
 
+  @Prop({ default: 0 })
+  syncVersion!: number;
+
+  // Chỉ dùng khi tạo read model; username hiện tại vẫn thuộc User Service.
+  @Prop()
+  syncUsername?: string;
+
   @Prop({ required: true, default: AppRole.USER, enum: APP_ROLES })
   role!: string;
 }

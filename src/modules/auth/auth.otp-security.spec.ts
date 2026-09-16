@@ -26,6 +26,7 @@ describe('AuthService giới hạn thử OTP', () => {
       redisService as never,
       {} as never,
       {} as never,
+      {} as never,
     );
     return { service, redisService };
   }

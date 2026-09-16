@@ -9,6 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { OutboxService } from '../outbox/outbox.service';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import {
@@ -56,6 +57,7 @@ export class AuthService {
     private redisService: RedisService,
     private rabbitMQService: RabbitMQService,
     private configService: ConfigService,
+    private readonly outboxService: OutboxService,
   ) {}
 
   private get userServiceUrl(): string {
@@ -70,29 +72,12 @@ export class AuthService {
       throw new BadRequestException('Email đã được đăng ký trước đó!');
     }
     const passwordHash = await bcrypt.hash(password, 10);
-    const newCred = await this.credentialModel.create({
+    const newCred = await this.createCredential(
       email,
       passwordHash,
-      role: AppRole.USER,
-    });
-    try {
-      await this.rabbitMQService.publish(
-        'user-profile-sync',
-        {
-          action: 'CREATE',
-          userId: newCred._id,
-          username,
-          email,
-          role: newCred.role,
-        },
-        requestId,
-      );
-    } catch (err: unknown) {
-      const error = toError(err);
-      this.logger.error(
-        `Đồng bộ sang User Service qua RabbitMQ thất bại: ${error.message}`,
-      );
-    }
+      username,
+      requestId,
+    );
     return {
       message: 'Đăng ký tài khoản thành công. Hãy đăng nhập để nhận mã OTP.',
       userId: newCred._id,
@@ -243,31 +228,12 @@ export class AuthService {
       throw new BadRequestException(`Vai trò ${newRole} không hợp lệ!`);
     }
 
-    const cred = await this.credentialModel.findByIdAndUpdate(
+    await this.changeCredential(
       userId,
+      'UPDATE_ROLE',
       { role: normalizedRole },
-      { new: true },
+      requestId,
     );
-    if (!cred) {
-      throw new BadRequestException('Không tìm thấy tài khoản người dùng!');
-    }
-
-    try {
-      await this.rabbitMQService.publish(
-        'user-profile-sync',
-        {
-          action: 'UPDATE_ROLE',
-          userId,
-          role: normalizedRole,
-        },
-        requestId,
-      );
-    } catch (err: unknown) {
-      const error = toError(err);
-      this.logger.warn(
-        `Đồng bộ cập nhật role sang User Service qua RabbitMQ thất bại: ${error.message}`,
-      );
-    }
 
     return {
       message: 'Cập nhật vai trò người dùng thành công!',
@@ -352,37 +318,17 @@ export class AuthService {
         );
       }
 
-      let cred = await this.credentialModel.findOne({ email });
-      let isNew = false;
+      let cred: CredentialDocument | null = await this.credentialModel.findOne({
+        email,
+      });
       if (!cred) {
-        const passwordHash = await bcrypt.hash(Math.random().toString(36), 10);
-        cred = await this.credentialModel.create({
+        const passwordHash = await bcrypt.hash(randomUUID(), 10);
+        cred = await this.createCredential(
           email,
           passwordHash,
-          role: AppRole.USER,
-        });
-        isNew = true;
-      }
-
-      if (isNew) {
-        try {
-          await this.rabbitMQService.publish(
-            'user-profile-sync',
-            {
-              action: 'CREATE',
-              userId: cred._id,
-              username: name,
-              email,
-              role: cred.role,
-            },
-            requestId,
-          );
-        } catch (err: unknown) {
-          const error = toError(err);
-          this.logger.error(
-            `Đăng ký sự kiện tạo profile Google thất bại: ${error.message}`,
-          );
-        }
+          name,
+          requestId,
+        );
       }
 
       let username = name;
@@ -452,31 +398,12 @@ export class AuthService {
       );
     }
 
-    const cred = await this.credentialModel.findByIdAndUpdate(
+    const cred = await this.changeCredential(
       user._id,
+      'UPDATE_EMAIL',
       { email },
-      { new: true },
+      requestId,
     );
-    if (!cred) {
-      throw new BadRequestException('Không tìm thấy tài khoản người dùng!');
-    }
-
-    try {
-      await this.rabbitMQService.publish(
-        'user-profile-sync',
-        {
-          action: 'UPDATE_EMAIL',
-          userId: cred._id,
-          email: cred.email,
-        },
-        requestId,
-      );
-    } catch (err: unknown) {
-      const error = toError(err);
-      this.logger.error(
-        `Đăng ký sự kiện cập nhật email thất bại: ${error.message}`,
-      );
-    }
 
     return {
       message: 'Cập nhật email thành công!',
@@ -491,27 +418,8 @@ export class AuthService {
     }
     const user = this.parseUserPayload(userPayloadBase64);
 
-    const cred = await this.credentialModel.findByIdAndDelete(user._id);
-    if (!cred) {
-      throw new BadRequestException('Không tìm thấy tài khoản người dùng!');
-    }
+    await this.changeCredential(user._id, 'DELETE', {}, requestId);
     await this.redisService.del(this.refreshTokenKey(String(user._id)));
-
-    try {
-      await this.rabbitMQService.publish(
-        'user-profile-sync',
-        {
-          action: 'DELETE',
-          userId: user._id,
-        },
-        requestId,
-      );
-    } catch (err: unknown) {
-      const error = toError(err);
-      this.logger.error(
-        `Đăng ký sự kiện xóa tài khoản thất bại: ${error.message}`,
-      );
-    }
 
     return {
       message: 'Xóa tài khoản thành công!',
@@ -533,31 +441,91 @@ export class AuthService {
 
   // 12. Admin xóa tài khoản của user bất kỳ
   async deleteUserByAdmin(userId: string, requestId: string) {
-    const cred = await this.credentialModel.findByIdAndDelete(userId);
-    if (!cred) {
-      throw new BadRequestException('Không tìm thấy tài khoản người dùng!');
-    }
-    await this.redisService.del(this.refreshTokenKey(userId));
-
-    try {
-      await this.rabbitMQService.publish(
-        'user-profile-sync',
-        {
-          action: 'DELETE',
-          userId,
-        },
-        requestId,
-      );
-    } catch (err: unknown) {
-      const error = toError(err);
-      this.logger.error(
-        `Đăng ký sự kiện admin xóa tài khoản thất bại: ${error.message}`,
-      );
-    }
+    await this.changeCredential(userId, 'DELETE', {}, requestId);
+    await this.redisService.del(this.refreshTokenKey(String(userId)));
 
     return {
       message: 'Admin xóa tài khoản người dùng thành công!',
     };
+  }
+
+  private async createCredential(
+    email: string,
+    passwordHash: string,
+    username: string,
+    requestId: string,
+  ): Promise<CredentialDocument> {
+    return this.credentialModel.db.transaction(
+      async (session) => {
+        const [cred] = await this.credentialModel.create(
+          [
+            {
+              email,
+              passwordHash,
+              role: AppRole.USER,
+              syncVersion: 1,
+              syncUsername: username,
+            },
+          ],
+          { session },
+        );
+        await this.enqueueProfile(cred, 'CREATE', 1, session, requestId);
+        return cred;
+      },
+      { writeConcern: { w: 'majority' } },
+    );
+  }
+
+  private async changeCredential(
+    userId: string,
+    action: 'UPDATE_EMAIL' | 'UPDATE_ROLE' | 'DELETE',
+    changes: { email?: string; role?: string },
+    requestId: string,
+  ): Promise<CredentialDocument> {
+    return this.credentialModel.db.transaction(
+      async (session) => {
+        const cred =
+          action === 'DELETE'
+            ? await this.credentialModel.findByIdAndDelete(userId, { session })
+            : await this.credentialModel.findByIdAndUpdate(
+                userId,
+                { $set: changes, $inc: { syncVersion: 1 } },
+                { returnDocument: 'after', session, runValidators: true },
+              );
+        if (!cred)
+          throw new BadRequestException('Không tìm thấy tài khoản người dùng!');
+        const version =
+          action === 'DELETE' ? (cred.syncVersion ?? 0) + 1 : cred.syncVersion;
+        await this.enqueueProfile(cred, action, version, session, requestId);
+        return cred;
+      },
+      { writeConcern: { w: 'majority' } },
+    );
+  }
+
+  private async enqueueProfile(
+    cred: CredentialDocument,
+    action: string,
+    version: number,
+    session: import('mongoose').ClientSession,
+    requestId: string,
+  ): Promise<void> {
+    await this.outboxService.enqueue(
+      {
+        action,
+        userId: String(cred._id),
+        version,
+        ...(action === 'DELETE'
+          ? {}
+          : {
+              email: cred.email,
+              role: cred.role,
+              username: cred.syncUsername || cred.email.split('@')[0],
+            }),
+      },
+      session,
+      requestId,
+    );
   }
 
   private async issueSessionTokens(

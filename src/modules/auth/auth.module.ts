@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { OutboxModule } from '../outbox/outbox.module';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { Credential, CredentialSchema } from '../../schemas/credential.schema';
@@ -25,6 +26,7 @@ import { GatewayIdentityGuard } from '../../common/guards/gateway-identity.guard
       }),
       inject: [ConfigService],
     }),
+    OutboxModule,
     RedisModule,
     RabbitMQModule,
   ],
