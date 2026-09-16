@@ -2,8 +2,8 @@
 
 Workflow trong repo này là caller mỏng; logic thực thi nằm trong Logger:
 
-- [Reusable Node CI](https://github.com/lethanh2006/Logger/blob/d274b289a561fd7c6e3637995482a75a89af4773/.github/workflows/reusable-node-ci.yml)
-- [Reusable VPS CD](https://github.com/lethanh2006/Logger/blob/d274b289a561fd7c6e3637995482a75a89af4773/.github/workflows/reusable-vps-cd.yml)
+- [Reusable Node CI](https://github.com/lethanh2006/Logger/blob/3edef57e4ab192832b7a2d5465b2948592a55125/.github/workflows/reusable-node-ci.yml)
+- [Reusable VPS CD](https://github.com/lethanh2006/Logger/blob/3edef57e4ab192832b7a2d5465b2948592a55125/.github/workflows/reusable-vps-cd.yml)
 
 Caller và `platform-ref` được pin cùng full commit SHA, không dùng `@main`.
 Nhờ vậy một thay đổi nền tảng không âm thầm ảnh hưởng mọi repository.
@@ -45,4 +45,4 @@ cho service này. Không dùng key cá nhân hoặc key của service khác.
 4. Cập nhật cùng SHA cho các service còn lại.
 
 Các chi tiết bảo mật, receiver và rollback nằm trong
-[Logger README](https://github.com/lethanh2006/Logger/blob/d274b289a561fd7c6e3637995482a75a89af4773/README.md).
+[Logger README](https://github.com/lethanh2006/Logger/blob/3edef57e4ab192832b7a2d5465b2948592a55125/README.md).
