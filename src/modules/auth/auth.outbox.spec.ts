@@ -80,7 +80,7 @@ describe('Auth ghi outbox chung transaction', () => {
     async (operation) => {
       const { service, model, outbox, rabbit, session } = setup();
       if (operation === 'role')
-        await service.updateUserRole(userId, 'VIP', 'req');
+        await service.updateUserRole(userId, 'admin', 'req');
       if (operation === 'email')
         await service.updateMyEmail(payload, 'new@example.com', 'req');
       if (operation === 'self-delete')

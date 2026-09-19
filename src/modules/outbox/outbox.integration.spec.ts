@@ -80,8 +80,8 @@ integration('Auth outbox với MongoDB replica set thật', () => {
     );
     const userId = String(result.userId);
     await Promise.all([
-      auth.updateUserRole(userId, 'vip', 'req-2'),
-      auth.updateUserRole(userId, 'manager', 'req-3'),
+      auth.updateUserRole(userId, 'user', 'req-2'),
+      auth.updateUserRole(userId, 'admin', 'req-3'),
     ]);
     const stored = await events
       .find({ aggregateId: userId })

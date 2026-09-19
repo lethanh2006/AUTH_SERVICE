@@ -210,7 +210,7 @@ export class AuthService {
           _id: String(credential._id),
           email: credential.email,
           username: userPayload.username || '',
-          role: credential.role,
+          role: normalizeAppRole(credential.role),
         },
       };
     } catch (err: unknown) {
@@ -373,7 +373,7 @@ export class AuthService {
     return {
       _id: cred._id,
       email: cred.email,
-      role: cred.role,
+      role: normalizeAppRole(cred.role),
     };
   }
 
@@ -435,7 +435,7 @@ export class AuthService {
     return {
       _id: cred._id,
       email: cred.email,
-      role: cred.role,
+      role: normalizeAppRole(cred.role),
     };
   }
 
@@ -519,7 +519,7 @@ export class AuthService {
           ? {}
           : {
               email: cred.email,
-              role: cred.role,
+              role: normalizeAppRole(cred.role),
               username: cred.syncUsername || cred.email.split('@')[0],
             }),
       },
@@ -537,7 +537,7 @@ export class AuthService {
       _id: cred._id,
       email: cred.email,
       username,
-      role: cred.role,
+      role: normalizeAppRole(cred.role),
     };
     const token = this.jwtService.sign({ user, tokenType: 'access' });
     const refreshTokenId = randomUUID();
@@ -588,4 +588,10 @@ export class AuthService {
 
     return user;
   }
+}
+
+/** Role cũ không còn trong hợp đồng mới được hạ về user khi đọc dữ liệu. */
+function normalizeAppRole(role: unknown): AppRole {
+  const normalized = typeof role === 'string' ? role.trim().toLowerCase() : '';
+  return normalized === 'admin' ? AppRole.ADMIN : AppRole.USER;
 }

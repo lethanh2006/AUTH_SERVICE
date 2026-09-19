@@ -11,10 +11,10 @@ describe('UpdateUserRoleDto', () => {
   });
 
   it('chuẩn hóa vai trò trước khi kiểm tra', async () => {
-    const dto = plainToInstance(UpdateUserRoleDto, { role: '  CHEF ' });
+    const dto = plainToInstance(UpdateUserRoleDto, { role: '  ADMIN ' });
 
     await expect(validate(dto)).resolves.toHaveLength(0);
-    expect(dto.role).toBe(AppRole.CHEF);
+    expect(dto.role).toBe(AppRole.ADMIN);
   });
 
   it('từ chối vai trò ngoài hợp đồng', async () => {
