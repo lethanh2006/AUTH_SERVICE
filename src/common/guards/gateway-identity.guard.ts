@@ -11,7 +11,7 @@ import {
   parseGatewayIdentity,
   RequestWithGatewayIdentity,
 } from '../interfaces/gateway-identity.interface';
-import { GatewaySignatureService } from '../security/gateway-signature.service';
+import { GatewaySignatureService } from '../gateway-signature.service';
 
 @Injectable()
 export class GatewayIdentityGuard implements CanActivate {

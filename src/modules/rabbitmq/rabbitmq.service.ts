@@ -8,7 +8,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { injectTraceHeaders, withMessageSpan } from '@nrapp/observability';
 import * as amqp from 'amqplib';
-import { SAFE_REQUEST_ID } from '../../common/middleware/request-id.middleware';
+import { SAFE_REQUEST_ID } from '../../common/request-id.middleware';
 
 @Injectable()
 export class RabbitMQService implements OnModuleInit, OnModuleDestroy {

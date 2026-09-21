@@ -5,7 +5,7 @@ import {
   runWithLogContext,
 } from '@nrapp/observability';
 import type { NextFunction, Response } from 'express';
-import type { RequestWithContext } from '../interfaces/request-context.interface';
+import type { RequestWithContext } from './interfaces/request-context.interface';
 
 export { REQUEST_ID_HEADER, SAFE_REQUEST_ID } from '@nrapp/observability';
 

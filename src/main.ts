@@ -10,7 +10,7 @@ import {
   logAndRecordException,
 } from '@nrapp/observability';
 import { AppModule } from './app.module';
-import { appLogger, nestLogger } from './common/observability/app-logger';
+import { appLogger, nestLogger } from './common/observability';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { logger: nestLogger });
