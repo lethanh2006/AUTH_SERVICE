@@ -1,98 +1,110 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# NRApp Authentication Service
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+The NRApp Authentication Service is a NestJS microservice responsible for
+credential storage, password verification, OTP login, Google sign-in, JWT
+sessions, and account/role operations. The mobile and web clients reach it
+through the API Gateway; the service-to-service introspection endpoint is for
+Gateway use.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Responsibilities
 
-## Description
+- Stores credential records in MongoDB with a unique email, password hash, and
+  application role (`user` or `admin`).
+- Registers accounts and starts password login with a six-digit email OTP.
+- Stores OTPs and login rate-limit/attempt state in Redis. OTPs expire after five
+  minutes, login OTP requests are limited to one per minute, and verification is
+  limited to five failed attempts.
+- Issues an access token and a refresh token. Refresh-token identifiers are kept
+  in Redis and rotated atomically when a session is refreshed.
+- Verifies Google ID tokens when `GOOGLE_WEB_CLIENT_ID` is configured.
+- Validates access tokens for the Gateway and returns the current credential role,
+  so deleted or changed accounts stop being accepted immediately.
+- Publishes transactional outbox events to the `user-profile-sync` RabbitMQ
+  queue when a credential is created, updated, or deleted.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+The username/profile read model remains owned by the User service. Auth reads it
+internally when building a session and publishes credential changes through the
+outbox rather than writing the User database directly.
 
-## Project setup
+## HTTP API
 
-```bash
-$ npm install
+All application routes are under `/api/auth`.
+
+| Method | Path | Access | Purpose |
+| --- | --- | --- | --- |
+| `POST` | `/register` | Public | Create a credential and enqueue profile creation |
+| `POST` | `/login` | Public | Verify password and send an OTP through RabbitMQ |
+| `POST` | `/verify` | Public | Verify the OTP and issue access/refresh tokens |
+| `POST` | `/refresh` | Public | Rotate a refresh token and issue a new session |
+| `POST` | `/login-google` | Public | Verify a Google ID token and issue a session |
+| `POST` | `/introspect` | Internal Gateway call | Validate an access token and return current identity |
+| `GET` | `/me` | Authenticated | Read the current credential |
+| `PATCH` | `/me/email` | Authenticated | Change the current account email |
+| `DELETE` | `/me` | Authenticated | Delete the current account |
+| `GET` | `/users/:userId` | Admin | Read another user's credential |
+| `DELETE` | `/users/:userId` | Admin | Delete another user's account |
+| `PATCH` | `/users/:userId/role` | Admin | Change another user's role |
+
+`GET /health` and `GET /health/live` expose the service liveness response.
+Protected account routes expect the signed identity headers sent by the Gateway;
+they are not intended to be called directly by the client.
+
+## Dependencies and configuration
+
+The service requires MongoDB, Redis, RabbitMQ, and the internal User service.
+MongoDB must support the transactions used when credentials and outbox records
+are written together.
+
+Copy `.env.example` to `.env` and set the environment-specific values:
+
+```env
+PORT=4000
+MONGO_URL=mongodb://localhost:27017/nrapp
+MONGO_DB_NAME=nrapp
+REDIS_URL=redis://localhost:6379
+USER_SERVICE=http://localhost:5000
+JWT_SECRET=replace_with_at_least_32_random_bytes
+GOOGLE_WEB_CLIENT_ID=your_google_web_client_id
+AUTH_INTERNAL_SECRET=replace_with_a_long_random_shared_secret
+AUTH_SIGNATURE_MAX_AGE_MS=300000
+
+Rabbitmq_Host=localhost
+Rabbitmq_Port=5672
+Rabbitmq_Username=guest
+Rabbitmq_Password=guest
 ```
 
-## Compile and run the project
+`AUTH_IDENTITY_CACHE_TTL_MS` is optional and must remain between `0` and `5000`;
+use a non-zero value only when a single Auth instance is serving traffic. The
+logging variables in `.env.example` control structured application logs. Never
+commit real credentials or JWT secrets.
+
+## Local development
+
+This service uses the local Logger observability package. Keep Logger beside this
+repository in the backend directory, install dependencies, and start Auth with
+its MongoDB, Redis, RabbitMQ, and User service dependencies available:
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+npm ci --prefix ../logger/packages/observability --no-audit --no-fund
+npm ci
+cp .env.example .env
+npm run start:dev
 ```
 
-## Run tests
+Quality checks:
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+npm run lint
+npm run format:check
+npm test
+npm run build
 ```
 
-## Deployment
+## CI/CD
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+`.github/workflows/ci.yml` uses the pinned reusable Node.js workflow from
+[Logger](https://github.com/lethanh2006/Logger). A successful push to the default
+branch triggers `.github/workflows/cd.yml` and deploys the exact commit through
+the pinned VPS deployment workflow. See [.github/CI.md](.github/CI.md) for the
+required secret and release process.
