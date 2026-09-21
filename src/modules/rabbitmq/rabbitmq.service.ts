@@ -6,9 +6,8 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { injectTraceHeaders, withMessageSpan } from '@nrapp/observability';
 import * as amqp from 'amqplib';
-import { SAFE_REQUEST_ID } from '../../common/request-id.middleware';
+import { SAFE_REQUEST_ID } from '@nrapp/observability';
 
 @Injectable()
 export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
@@ -123,81 +122,60 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
     queueName: string,
     message: unknown,
     requestId?: string,
-    traceHeaders?: Record<string, string>,
   ): Promise<void> {
     const channel = this.channel;
     if (!channel) throw new Error('RabbitMQ Channel is not initialized');
 
-    await withMessageSpan(
-      `${queueName} publish`,
-      {},
-      async () => {
-        await channel.assertQueue(queueName, { durable: true });
-        const headers = {
-          ...injectTraceHeaders(
-            requestId && SAFE_REQUEST_ID.test(requestId)
-              ? { 'x-request-id': requestId }
-              : {},
-          ),
-          ...traceHeaders,
-        };
-        const messageId = randomUUID();
-        await new Promise<void>((resolve, reject) => {
-          const cleanup = () => {
-            clearTimeout(timer);
-            channel.off('return', onReturn);
-          };
-          const onReturn = (returned: amqp.Message) => {
-            if (returned.properties.messageId !== messageId) return;
+    await channel.assertQueue(queueName, { durable: true });
+    const headers =
+      requestId && SAFE_REQUEST_ID.test(requestId)
+        ? { 'x-request-id': requestId }
+        : {};
+    const messageId = randomUUID();
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        channel.off('return', onReturn);
+      };
+      const onReturn = (returned: amqp.Message) => {
+        if (returned.properties.messageId !== messageId) return;
+        cleanup();
+        reject(new Error('RabbitMQ message was not routed'));
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error('RabbitMQ publisher confirm timed out'));
+      }, 10000);
+      channel.on('return', onReturn);
+      try {
+        channel.sendToQueue(
+          queueName,
+          Buffer.from(JSON.stringify(message)),
+          {
+            persistent: true,
+            mandatory: true,
+            contentType: 'application/json',
+            messageId,
+            headers,
+          },
+          (error: unknown) => {
             cleanup();
-            reject(new Error('RabbitMQ message was not routed'));
-          };
-          const timer = setTimeout(() => {
-            cleanup();
-            reject(new Error('RabbitMQ publisher confirm timed out'));
-          }, 10000);
-          channel.on('return', onReturn);
-          try {
-            channel.sendToQueue(
-              queueName,
-              Buffer.from(JSON.stringify(message)),
-              {
-                persistent: true,
-                mandatory: true,
-                contentType: 'application/json',
-                messageId,
-                headers,
-              },
-              (error: unknown) => {
-                cleanup();
-                if (error)
-                  reject(
-                    error instanceof Error
-                      ? error
-                      : new Error('RabbitMQ publish failed'),
-                  );
-                else resolve();
-              },
-            );
-          } catch (error: unknown) {
-            cleanup();
-            reject(
-              error instanceof Error
-                ? error
-                : new Error('RabbitMQ publish failed'),
-            );
-          }
-        });
-      },
-      {
-        kind: 3,
-        attributes: {
-          'messaging.system': 'rabbitmq',
-          'messaging.destination.name': queueName,
-          'messaging.operation.type': 'publish',
-        },
-      },
-    );
+            if (error)
+              reject(
+                error instanceof Error
+                  ? error
+                  : new Error('RabbitMQ publish failed'),
+              );
+            else resolve();
+          },
+        );
+      } catch (error: unknown) {
+        cleanup();
+        reject(
+          error instanceof Error ? error : new Error('RabbitMQ publish failed'),
+        );
+      }
+    });
   }
 
   async onModuleDestroy() {

@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { OAuth2Client } from 'google-auth-library';
 import { AuthService } from './auth.service';
 
 describe('Auth ghi outbox chung transaction', () => {
@@ -39,7 +40,13 @@ describe('Auth ghi outbox chung transaction', () => {
       { sign: jest.fn().mockReturnValue('token') } as never,
       redis as never,
       rabbit as never,
-      { get: jest.fn().mockReturnValue('http://user.test') } as never,
+      {
+        get: jest.fn((key: string) => {
+          if (key === 'AUTH_IDENTITY_CACHE_TTL_MS') return undefined;
+          if (key === 'GOOGLE_WEB_CLIENT_ID') return 'google-web-client-id';
+          return 'http://user.test';
+        }),
+      } as never,
       outbox as never,
     );
     return { service, model, outbox, rabbit, redis, session };
@@ -140,11 +147,15 @@ describe('Auth ghi outbox chung transaction', () => {
   });
 
   it('tài khoản Google mới cũng lưu CREATE vào outbox', async () => {
+    jest.spyOn(OAuth2Client.prototype, 'verifyIdToken').mockResolvedValue({
+      getPayload: () => ({
+        email: cred.email,
+        email_verified: true,
+        name: 'Google Name',
+      }),
+    } as never);
     jest
       .spyOn(axios, 'get')
-      .mockResolvedValueOnce({
-        data: { email: cred.email, name: 'Google Name' },
-      })
       .mockRejectedValueOnce(new Error('Profile not synced yet'));
     const { service, outbox, rabbit } = setup();
     await service.loginWithGoogle('google-token', 'req');

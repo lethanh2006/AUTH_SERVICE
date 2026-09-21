@@ -8,7 +8,7 @@ import { AuthController } from './auth.controller';
 import { Credential, CredentialSchema } from '../../schemas/credential.schema';
 import { RedisModule } from '../redis/redis.module';
 import { RabbitMQModule } from '../rabbitmq/rabbitmq.module';
-import { requireJwtSecret } from '../../common/config/jwt-secret';
+import { createJwtKey } from '../../common/config/jwt-secret';
 import { GatewayIdentityGuard } from '../../common/guards/gateway-identity.guard';
 @Module({
   imports: [
@@ -20,7 +20,7 @@ import { GatewayIdentityGuard } from '../../common/guards/gateway-identity.guard
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
-        secret: requireJwtSecret(configService.get<string>('JWT_SECRET')),
+        secret: createJwtKey(configService.get<string>('JWT_SECRET')),
         signOptions: { expiresIn: '7d', algorithm: 'HS256' },
         verifyOptions: { algorithms: ['HS256'] },
       }),

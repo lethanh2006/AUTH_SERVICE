@@ -6,8 +6,8 @@ import {
 } from '@nestjs/common';
 import { HttpAdapterHost } from '@nestjs/core';
 import { handleOriginHttpException } from '@nrapp/observability';
-import type { RequestWithContext } from './interfaces/request-context.interface';
-import { appLogger } from './observability';
+import type { RequestWithContext } from '../interfaces/request-context.interface';
+import { appLogger } from '../logging/logger';
 
 @Catch()
 @Injectable()

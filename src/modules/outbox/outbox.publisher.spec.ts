@@ -7,7 +7,6 @@ describe('Auth outbox relay', () => {
       payload: { action: 'CREATE' },
       attempts: 2,
       requestId: 'req',
-      traceHeaders: { traceparent: 'trace' },
     };
     const model = {
       findOneAndUpdate: jest

@@ -17,9 +17,6 @@ export class OutboxEvent {
   @Prop()
   requestId?: string;
 
-  @Prop({ type: MongoSchema.Types.Mixed })
-  traceHeaders?: Record<string, string>;
-
   @Prop({ default: 0 })
   attempts!: number;
 

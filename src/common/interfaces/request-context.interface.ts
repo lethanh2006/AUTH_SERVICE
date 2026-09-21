@@ -1,6 +1,6 @@
 import type { Request } from 'express';
 
-/** Dữ liệu theo suốt một HTTP request để tracing và logging. */
+/** Request ID để liên kết log trong suốt một HTTP request. */
 export interface RequestContext {
   requestId: string;
 }

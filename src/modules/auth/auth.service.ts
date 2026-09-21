@@ -11,6 +11,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { OutboxService } from '../outbox/outbox.service';
 import { JwtService } from '@nestjs/jwt';
+import { OAuth2Client } from 'google-auth-library';
 import * as bcrypt from 'bcryptjs';
 import {
   Credential,
@@ -25,10 +26,9 @@ import axios from 'axios';
 import { APP_ROLES, AppRole } from '../../common/enums/app-role.enum';
 import { randomInt, randomUUID } from 'node:crypto';
 import { toError } from '../../common/utils/error.util';
-import {
-  GatewayIdentity,
-  parseGatewayIdentity,
-} from '../../common/interfaces/gateway-identity.interface';
+import { InFlightReads } from '../../common/utils/in-flight-reads';
+import type { GatewayIdentity } from '../../common/interfaces/gateway-identity.interface';
+import { parseGatewayIdentity } from '../../common/utils/gateway-identity.util';
 
 interface UserServiceResponse {
   user?: {
@@ -36,20 +36,15 @@ interface UserServiceResponse {
   };
 }
 
-interface GoogleProfileResponse {
-  email?: string;
-  name?: string;
-  given_name?: string;
-}
-
-interface GoogleErrorResponse {
-  error_description?: string;
-}
-
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  private readonly googleClient = new OAuth2Client();
   private readonly refreshTokenTtlSeconds = 30 * 24 * 60 * 60;
+  private readonly credentialIdentityReads: InFlightReads<Pick<
+    CredentialDocument,
+    '_id' | 'email' | 'role'
+  > | null>;
   constructor(
     @InjectModel(Credential.name)
     private credentialModel: Model<CredentialDocument>,
@@ -58,7 +53,17 @@ export class AuthService {
     private rabbitMQService: RabbitMQService,
     private configService: ConfigService,
     private readonly outboxService: OutboxService,
-  ) {}
+  ) {
+    const ttlMs = Number(
+      this.configService.get<string>('AUTH_IDENTITY_CACHE_TTL_MS') ?? 0,
+    );
+    if (!Number.isInteger(ttlMs) || ttlMs < 0 || ttlMs > 5000) {
+      throw new Error(
+        'AUTH_IDENTITY_CACHE_TTL_MS must be 0..5000; enable only for a single Auth instance',
+      );
+    }
+    this.credentialIdentityReads = new InFlightReads(ttlMs);
+  }
 
   private get userServiceUrl(): string {
     return (
@@ -197,9 +202,14 @@ export class AuthService {
         return { valid: false, message: 'Token payload không hợp lệ' };
       }
 
-      const credential = await this.credentialModel
-        .findById(userPayload._id)
-        .lean();
+      const credential = await this.credentialIdentityReads.run(
+        userPayload._id,
+        async () =>
+          this.credentialModel
+            .findById(userPayload._id)
+            .select({ _id: 1, email: 1, role: 1 })
+            .lean<Pick<CredentialDocument, '_id' | 'email' | 'role'> | null>(),
+      );
       if (!credential) {
         return { valid: false, message: 'Tài khoản không còn tồn tại' };
       }
@@ -291,30 +301,28 @@ export class AuthService {
   // 7. Đăng nhập bằng Google
   async loginWithGoogle(token: string, requestId: string) {
     try {
-      let email: string = '';
-      let name: string = '';
-      try {
-        const res = await axios.get<GoogleProfileResponse>(
-          `https://oauth2.googleapis.com/tokeninfo?id_token=${token}`,
-        );
-        email = res.data.email || '';
-        name =
-          res.data.name || res.data.given_name || email.split('@')[0] || '';
-      } catch {
-        const res = await axios.get<GoogleProfileResponse>(
-          'https://www.googleapis.com/oauth2/v3/userinfo',
-          {
-            headers: { Authorization: `Bearer ${token}` },
-          },
-        );
-        email = res.data.email || '';
-        name =
-          res.data.name || res.data.given_name || email.split('@')[0] || '';
+      const clientId = this.configService
+        .get<string>('GOOGLE_WEB_CLIENT_ID')
+        ?.trim();
+      if (!clientId) {
+        throw new Error('Thiếu GOOGLE_WEB_CLIENT_ID trong cấu hình Auth');
       }
 
-      if (!email) {
+      const ticket = await this.googleClient.verifyIdToken({
+        idToken: token,
+        audience: clientId,
+      });
+      const payload = ticket.getPayload();
+      const email = payload?.email?.trim().toLowerCase();
+      const name =
+        payload?.name?.trim() ||
+        payload?.given_name?.trim() ||
+        email?.split('@')[0] ||
+        '';
+
+      if (!email || payload?.email_verified !== true) {
         throw new BadRequestException(
-          'Không thể lấy thông tin email từ Google Token',
+          'Google Token không có email đã được xác minh',
         );
       }
 
@@ -350,9 +358,7 @@ export class AuthService {
         ...session,
       };
     } catch (error: unknown) {
-      const errorMessage = axios.isAxiosError<GoogleErrorResponse>(error)
-        ? error.response?.data?.error_description || error.message
-        : toError(error).message;
+      const errorMessage = toError(error).message;
       throw new BadRequestException(
         `Đăng nhập Google thất bại: ${errorMessage}`,
       );
@@ -482,25 +488,37 @@ export class AuthService {
     changes: { email?: string; role?: string },
     requestId: string,
   ): Promise<CredentialDocument> {
-    return this.credentialModel.db.transaction(
-      async (session) => {
-        const cred =
-          action === 'DELETE'
-            ? await this.credentialModel.findByIdAndDelete(userId, { session })
-            : await this.credentialModel.findByIdAndUpdate(
-                userId,
-                { $set: changes, $inc: { syncVersion: 1 } },
-                { returnDocument: 'after', session, runValidators: true },
-              );
-        if (!cred)
-          throw new BadRequestException('Không tìm thấy tài khoản người dùng!');
-        const version =
-          action === 'DELETE' ? (cred.syncVersion ?? 0) + 1 : cred.syncVersion;
-        await this.enqueueProfile(cred, action, version, session, requestId);
-        return cred;
-      },
-      { writeConcern: { w: 'majority' } },
-    );
+    this.credentialIdentityReads.invalidate(userId);
+    try {
+      return await this.credentialModel.db.transaction(
+        async (session) => {
+          const cred =
+            action === 'DELETE'
+              ? await this.credentialModel.findByIdAndDelete(userId, {
+                  session,
+                })
+              : await this.credentialModel.findByIdAndUpdate(
+                  userId,
+                  { $set: changes, $inc: { syncVersion: 1 } },
+                  { returnDocument: 'after', session, runValidators: true },
+                );
+          if (!cred)
+            throw new BadRequestException(
+              'Không tìm thấy tài khoản người dùng!',
+            );
+          const version =
+            action === 'DELETE'
+              ? (cred.syncVersion ?? 0) + 1
+              : cred.syncVersion;
+          await this.enqueueProfile(cred, action, version, session, requestId);
+          return cred;
+        },
+        { writeConcern: { w: 'majority' } },
+      );
+    } finally {
+      // Fence any old read/cache fill racing the transaction, including errors.
+      this.credentialIdentityReads.invalidate(userId);
+    }
   }
 
   private async enqueueProfile(

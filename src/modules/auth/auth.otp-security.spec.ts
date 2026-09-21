@@ -25,7 +25,7 @@ describe('AuthService giới hạn thử OTP', () => {
       {} as never,
       redisService as never,
       {} as never,
-      {} as never,
+      { get: jest.fn().mockReturnValue(undefined) } as never,
       {} as never,
     );
     return { service, redisService };

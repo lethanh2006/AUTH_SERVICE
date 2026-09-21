@@ -19,11 +19,11 @@ jobs:
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == github.event.repository.default_branch
-    uses: lethanh2006/Logger/.github/workflows/reusable-vps-cd.yml@3edef57e4ab192832b7a2d5465b2948592a55125
+    uses: lethanh2006/Logger/.github/workflows/reusable-vps-cd.yml@8f26f109b44c5fb0454a911d9dd8c601350c6281
     with:
       service-name: auth
       deploy-revision: ${{ github.event.workflow_run.head_sha }}
       default-branch: ${{ github.event.repository.default_branch }}
-      platform-ref: 3edef57e4ab192832b7a2d5465b2948592a55125
+      platform-ref: 8f26f109b44c5fb0454a911d9dd8c601350c6281
     secrets:
       VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}

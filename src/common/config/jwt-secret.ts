@@ -1,3 +1,5 @@
+import { createSecretKey, KeyObject } from 'node:crypto';
+
 const MINIMUM_JWT_SECRET_BYTES = 32;
 const FORBIDDEN_JWT_SECRETS = new Set([
   'replace_with_at_least_32_random_characters',
@@ -19,4 +21,8 @@ export function requireJwtSecret(value: string | undefined): string {
   }
 
   return secret;
+}
+
+export function createJwtKey(value: string | undefined): KeyObject {
+  return createSecretKey(Buffer.from(requireJwtSecret(value), 'utf8'));
 }

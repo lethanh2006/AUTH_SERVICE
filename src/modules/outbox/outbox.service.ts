@@ -1,6 +1,5 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { injectTraceHeaders } from '@nrapp/observability';
 import { randomUUID } from 'node:crypto';
 import { ClientSession, Model } from 'mongoose';
 import {
@@ -32,12 +31,6 @@ export class OutboxService implements OnModuleInit {
           aggregateId: String(payload.userId),
           payload: { ...payload, eventId },
           requestId,
-          traceHeaders: Object.fromEntries(
-            Object.entries(injectTraceHeaders()).filter(
-              (entry): entry is [string, string] =>
-                typeof entry[1] === 'string',
-            ),
-          ),
         },
       ],
       { session },

@@ -74,7 +74,6 @@ export class OutboxPublisher implements OnModuleInit, OnModuleDestroy {
             'user-profile-sync',
             event.payload,
             event.requestId,
-            event.traceHeaders,
           );
           await this.model
             .updateOne(filter, {

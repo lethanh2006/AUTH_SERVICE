@@ -36,7 +36,11 @@ describe('AuthService refresh token', () => {
       jwtService as never,
       redisService as never,
       {} as never,
-      { get: jest.fn().mockReturnValue('http://user.test') } as never,
+      {
+        get: jest.fn((key: string) =>
+          key === 'AUTH_IDENTITY_CACHE_TTL_MS' ? undefined : 'http://user.test',
+        ),
+      } as never,
       {} as never,
     );
 

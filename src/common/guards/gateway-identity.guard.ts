@@ -7,11 +7,9 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { GATEWAY_ROLES_KEY } from '../decorators/gateway-roles.decorator';
-import {
-  parseGatewayIdentity,
-  RequestWithGatewayIdentity,
-} from '../interfaces/gateway-identity.interface';
-import { GatewaySignatureService } from '../gateway-signature.service';
+import type { RequestWithGatewayIdentity } from '../interfaces/gateway-identity.interface';
+import { parseGatewayIdentity } from '../utils/gateway-identity.util';
+import { GatewaySignatureService } from '../security/gateway-signature.service';
 
 @Injectable()
 export class GatewayIdentityGuard implements CanActivate {
