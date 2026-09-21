@@ -1,62 +1,61 @@
-# NRApp Authentication Service
+# Dịch vụ xác thực NRApp
 
-The NRApp Authentication Service is a NestJS microservice responsible for
-credential storage, password verification, OTP login, Google sign-in, JWT
-sessions, and account/role operations. The mobile and web clients reach it
-through the API Gateway; the service-to-service introspection endpoint is for
-Gateway use.
+Dịch vụ xác thực NRApp là microservice NestJS phụ trách lưu credential, kiểm tra
+mật khẩu, đăng nhập OTP, đăng nhập Google, phiên JWT và các thao tác tài
+khoản/role. Ứng dụng mobile và web truy cập service thông qua API Gateway;
+endpoint introspection dùng cho giao tiếp giữa Gateway và Auth.
 
-## Responsibilities
+## Trách nhiệm
 
-- Stores credential records in MongoDB with a unique email, password hash, and
-  application role (`user` or `admin`).
-- Registers accounts and starts password login with a six-digit email OTP.
-- Stores OTPs and login rate-limit/attempt state in Redis. OTPs expire after five
-  minutes, login OTP requests are limited to one per minute, and verification is
-  limited to five failed attempts.
-- Issues an access token and a refresh token. Refresh-token identifiers are kept
-  in Redis and rotated atomically when a session is refreshed.
-- Verifies Google ID tokens when `GOOGLE_WEB_CLIENT_ID` is configured.
-- Validates access tokens against the current credential record and returns the
-  current role; deleted accounts and role changes are reflected on introspection
-  (apart from the optional configured identity-cache TTL).
-- Publishes transactional outbox events to the `user-profile-sync` RabbitMQ
-  queue when a credential is created, updated, or deleted.
+- Lưu credential trong MongoDB với email duy nhất, password hash và role ứng
+  dụng (`user` hoặc `admin`).
+- Đăng ký tài khoản và bắt đầu luồng đăng nhập bằng mật khẩu với OTP email gồm
+  sáu chữ số.
+- Lưu OTP cùng trạng thái giới hạn request/số lần thử trong Redis. OTP hết hạn
+  sau năm phút, mỗi email chỉ yêu cầu OTP tối đa một lần trong một phút và việc
+  xác thực bị giới hạn năm lần sai.
+- Cấp access token và refresh token. ID của refresh token được lưu trong Redis và
+  xoay vòng nguyên tử khi làm mới phiên.
+- Kiểm tra Google ID token khi đã cấu hình `GOOGLE_WEB_CLIENT_ID`.
+- Kiểm tra access token cho Gateway và trả về role hiện tại của credential; việc
+  tài khoản bị xóa hoặc role thay đổi sẽ được phản ánh khi introspection (ngoại
+  trừ thời gian cache identity tùy chọn đã cấu hình).
+- Phát hành event outbox giao dịch vào queue RabbitMQ `user-profile-sync` khi
+  credential được tạo, cập nhật hoặc xóa.
 
-The username/profile read model remains owned by the User service. Auth reads it
-internally when building a session and publishes credential changes through the
-outbox rather than writing the User database directly.
+User service vẫn sở hữu read model username/profile. Auth đọc dữ liệu này qua
+kết nối nội bộ khi tạo phiên và phát event thay đổi credential qua outbox, không
+ghi trực tiếp vào database của User.
 
 ## HTTP API
 
-All application routes are under `/api/auth`.
+Tất cả route nghiệp vụ nằm dưới `/api/auth`.
 
-| Method | Path | Access | Purpose |
+| Method | Path | Quyền | Mục đích |
 | --- | --- | --- | --- |
-| `POST` | `/register` | Public | Create a credential and enqueue profile creation |
-| `POST` | `/login` | Public | Verify password and send an OTP through RabbitMQ |
-| `POST` | `/verify` | Public | Verify the OTP and issue access/refresh tokens |
-| `POST` | `/refresh` | Public | Rotate a refresh token and issue a new session |
-| `POST` | `/login-google` | Public | Verify a Google ID token and issue a session |
-| `POST` | `/introspect` | Internal Gateway call | Validate an access token and return current identity |
-| `GET` | `/me` | Authenticated | Read the current credential |
-| `PATCH` | `/me/email` | Authenticated | Change the current account email |
-| `DELETE` | `/me` | Authenticated | Delete the current account |
-| `GET` | `/users/:userId` | Admin | Read another user's credential |
-| `DELETE` | `/users/:userId` | Admin | Delete another user's account |
-| `PATCH` | `/users/:userId/role` | Admin | Change another user's role |
+| `POST` | `/register` | Công khai | Tạo credential và enqueue việc tạo profile |
+| `POST` | `/login` | Công khai | Kiểm tra mật khẩu và gửi OTP qua RabbitMQ |
+| `POST` | `/verify` | Công khai | Kiểm tra OTP và cấp access/refresh token |
+| `POST` | `/refresh` | Công khai | Xoay vòng refresh token và cấp phiên mới |
+| `POST` | `/login-google` | Công khai | Kiểm tra Google ID token và cấp phiên |
+| `POST` | `/introspect` | Gateway nội bộ | Kiểm tra access token và trả về identity hiện tại |
+| `GET` | `/me` | Đã xác thực | Đọc credential hiện tại |
+| `PATCH` | `/me/email` | Đã xác thực | Đổi email tài khoản hiện tại |
+| `DELETE` | `/me` | Đã xác thực | Xóa tài khoản hiện tại |
+| `GET` | `/users/:userId` | Admin | Đọc credential của user khác |
+| `DELETE` | `/users/:userId` | Admin | Xóa tài khoản user khác |
+| `PATCH` | `/users/:userId/role` | Admin | Đổi role của user khác |
 
-`GET /health` and `GET /health/live` expose the service liveness response.
-Protected account routes expect the signed identity headers sent by the Gateway;
-they are not intended to be called directly by the client.
+`GET /health` và `GET /health/live` trả về trạng thái liveness của service.
+Các route tài khoản được bảo vệ yêu cầu header identity có chữ ký do Gateway
+gửi; client không gọi trực tiếp các route này.
 
-## Dependencies and configuration
+## Dependency và cấu hình
 
-The service requires MongoDB, Redis, RabbitMQ, and the internal User service.
-MongoDB must support the transactions used when credentials and outbox records
-are written together.
+Service cần MongoDB, Redis, RabbitMQ và User service nội bộ. MongoDB phải hỗ trợ
+transaction vì credential và outbox được ghi cùng nhau trong một transaction.
 
-Copy `.env.example` to `.env` and set the environment-specific values:
+Sao chép `.env.example` thành `.env` rồi điền giá trị theo môi trường:
 
 ```env
 PORT=4000
@@ -75,16 +74,16 @@ Rabbitmq_Username=guest
 Rabbitmq_Password=guest
 ```
 
-`AUTH_IDENTITY_CACHE_TTL_MS` is optional and must remain between `0` and `5000`;
-use a non-zero value only when a single Auth instance is serving traffic. The
-logging variables in `.env.example` control structured application logs. Never
-commit real credentials or JWT secrets.
+`AUTH_IDENTITY_CACHE_TTL_MS` là tùy chọn và phải nằm trong khoảng `0` đến
+`5000`; chỉ bật giá trị khác `0` khi chỉ có một Auth instance phục vụ traffic.
+Các biến logging trong `.env.example` cấu hình application log có cấu trúc.
+Không commit credential hoặc JWT secret thật.
 
-## Local development
+## Chạy local
 
-This service uses the local Logger observability package. Keep Logger beside this
-repository in the backend directory, install dependencies, and start Auth with
-its MongoDB, Redis, RabbitMQ, and User service dependencies available:
+Service dùng package observability cục bộ của Logger. Đặt Logger cạnh repository
+này trong thư mục backend, cài dependency và bảo đảm MongoDB, Redis, RabbitMQ
+cùng User service đã sẵn sàng:
 
 ```bash
 npm ci --prefix ../logger/packages/observability --no-audit --no-fund
@@ -93,7 +92,7 @@ cp .env.example .env
 npm run start:dev
 ```
 
-Quality checks:
+Các lệnh kiểm tra:
 
 ```bash
 npm run lint
@@ -104,8 +103,8 @@ npm run build
 
 ## CI/CD
 
-`.github/workflows/ci.yml` uses the pinned reusable Node.js workflow from
-[Logger](https://github.com/lethanh2006/Logger). A successful push to the default
-branch triggers `.github/workflows/cd.yml` and deploys the exact commit through
-the pinned VPS deployment workflow. See [.github/CI.md](.github/CI.md) for the
-required secret and release process.
+`.github/workflows/ci.yml` dùng reusable workflow kiểm tra Node.js đã pin từ
+[Logger](https://github.com/lethanh2006/Logger). Push thành công vào nhánh mặc
+định sẽ kích hoạt `.github/workflows/cd.yml` và deploy đúng commit thông qua
+reusable VPS deployment workflow đã pin. Xem [.github/CI.md](.github/CI.md) để
+biết secret cần thiết và quy trình phát hành.
