@@ -17,8 +17,9 @@ Gateway use.
 - Issues an access token and a refresh token. Refresh-token identifiers are kept
   in Redis and rotated atomically when a session is refreshed.
 - Verifies Google ID tokens when `GOOGLE_WEB_CLIENT_ID` is configured.
-- Validates access tokens for the Gateway and returns the current credential role,
-  so deleted or changed accounts stop being accepted immediately.
+- Validates access tokens against the current credential record and returns the
+  current role; deleted accounts and role changes are reflected on introspection
+  (apart from the optional configured identity-cache TTL).
 - Publishes transactional outbox events to the `user-profile-sync` RabbitMQ
   queue when a credential is created, updated, or deleted.
 
