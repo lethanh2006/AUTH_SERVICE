@@ -36,10 +36,18 @@ interface UserServiceResponse {
   };
 }
 
+const GOOGLE_VERIFY_TIMEOUT_MS = 4_000;
+const USER_PROFILE_TIMEOUT_MS = 1_500;
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
-  private readonly googleClient = new OAuth2Client();
+  private readonly googleClient = new OAuth2Client({
+    transporterOptions: {
+      timeout: GOOGLE_VERIFY_TIMEOUT_MS,
+      retry: false,
+    },
+  });
   private readonly refreshTokenTtlSeconds = 30 * 24 * 60 * 60;
   private readonly credentialIdentityReads: InFlightReads<Pick<
     CredentialDocument,
@@ -67,7 +75,9 @@ export class AuthService {
 
   private get userServiceUrl(): string {
     return (
-      this.configService.get<string>('USER_SERVICE') || 'http://localhost:5000'
+      this.configService.get<string>('USER_SERVICE') ||
+      this.configService.get<string>('USER_SERVICE_URL') ||
+      'http://localhost:5000'
     );
   }
   async register(registerDto: RegisterDto, requestId: string) {
@@ -165,21 +175,7 @@ export class AuthService {
       throw new BadRequestException('Không tìm thấy tài khoản người dùng!');
     }
     // Lấy thông tin username từ User Service thông qua API internal
-    let username = '';
-    try {
-      const response = await axios.get<UserServiceResponse>(
-        `${this.userServiceUrl}/api/user/internal/${String(cred._id)}`,
-        {
-          headers: { 'x-request-id': requestId },
-        },
-      );
-      username = response.data.user?.username || '';
-    } catch (err: unknown) {
-      const error = toError(err);
-      this.logger.warn(
-        `Không lấy được thông tin username từ User Service: ${error.message}`,
-      );
-    }
+    const username = await this.loadUsername(cred._id, requestId, '');
     const session = await this.issueSessionTokens(cred, username);
     return {
       message: 'Xác thực thành công!',
@@ -272,18 +268,7 @@ export class AuthService {
         throw new UnauthorizedException('Tài khoản không còn tồn tại');
       }
 
-      let username = '';
-      try {
-        const response = await axios.get<UserServiceResponse>(
-          `${this.userServiceUrl}/api/user/internal/${String(cred._id)}`,
-          {
-            headers: { 'x-request-id': requestId },
-          },
-        );
-        username = response.data.user?.username || '';
-      } catch {
-        // fallback
-      }
+      const username = await this.loadUsername(cred._id, requestId, '');
 
       const session = await this.issueSessionTokens(cred, username, jti);
       return {
@@ -339,18 +324,7 @@ export class AuthService {
         );
       }
 
-      let username = name;
-      try {
-        const response = await axios.get<UserServiceResponse>(
-          `${this.userServiceUrl}/api/user/internal/${String(cred._id)}`,
-          {
-            headers: { 'x-request-id': requestId },
-          },
-        );
-        username = response.data.user?.username || name;
-      } catch {
-        // fallback
-      }
+      const username = await this.loadUsername(cred._id, requestId, name);
 
       const session = await this.issueSessionTokens(cred, username);
       return {
@@ -480,6 +454,28 @@ export class AuthService {
       },
       { writeConcern: { w: 'majority' } },
     );
+  }
+
+  private async loadUsername(
+    userId: unknown,
+    requestId: string,
+    fallback: string,
+  ): Promise<string> {
+    try {
+      const response = await axios.get<UserServiceResponse>(
+        `${this.userServiceUrl}/api/user/internal/${String(userId)}`,
+        {
+          headers: { 'x-request-id': requestId },
+          timeout: USER_PROFILE_TIMEOUT_MS,
+        },
+      );
+      return response.data.user?.username?.trim() || fallback;
+    } catch (error: unknown) {
+      this.logger.warn(
+        `Không lấy được username từ User Service, dùng dữ liệu dự phòng: ${toError(error).message}`,
+      );
+      return fallback;
+    }
   }
 
   private async changeCredential(

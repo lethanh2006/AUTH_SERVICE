@@ -154,11 +154,18 @@ describe('Auth ghi outbox chung transaction', () => {
         name: 'Google Name',
       }),
     } as never);
-    jest
+    const userRequest = jest
       .spyOn(axios, 'get')
       .mockRejectedValueOnce(new Error('Profile not synced yet'));
     const { service, outbox, rabbit } = setup();
     await service.loginWithGoogle('google-token', 'req');
+    expect(userRequest).toHaveBeenCalledWith(
+      `http://user.test/api/user/internal/${userId}`,
+      expect.objectContaining({
+        headers: { 'x-request-id': 'req' },
+        timeout: 1_500,
+      }),
+    );
     expect(outbox.enqueue).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'CREATE', version: 1 }),
       expect.anything(),

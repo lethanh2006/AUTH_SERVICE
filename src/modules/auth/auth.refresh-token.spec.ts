@@ -52,7 +52,9 @@ describe('AuthService refresh token', () => {
   });
 
   it('xác minh hạn dùng và xoay refresh token sau mỗi lần dùng', async () => {
-    jest.spyOn(axios, 'get').mockRejectedValue(new Error('user unavailable'));
+    const userRequest = jest
+      .spyOn(axios, 'get')
+      .mockRejectedValue(new Error('user unavailable'));
     const { service, jwtService, redisService } = createService();
 
     await expect(
@@ -75,6 +77,10 @@ describe('AuthService refresh token', () => {
       'refresh-id',
       expect.any(String),
       30 * 24 * 60 * 60,
+    );
+    expect(userRequest).toHaveBeenCalledWith(
+      `http://user.test/api/user/internal/${userId.toString()}`,
+      expect.objectContaining({ timeout: 1_500 }),
     );
   });
 

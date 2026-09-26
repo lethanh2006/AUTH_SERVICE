@@ -20,6 +20,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     this.client = createClient({
       url: redisUrl,
       RESP: 2,
+      socket: { connectTimeout: 3_000 },
+      commandOptions: { timeout: 3_000 },
     }) as unknown as RedisClientType;
 
     this.client.on('error', (err) => this.logger.error('Redis Error:', err));
